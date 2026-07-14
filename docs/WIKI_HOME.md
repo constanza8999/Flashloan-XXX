@@ -1,5 +1,10 @@
 # Flashloan-XXX Wiki
 
+> **Note:** This file is a reference template for the GitHub Wiki.\
+> To create the actual wiki, either:
+> - Push this content to `https://github.com/constanza8999/Flashloan-XXX.wiki.git`,
+> - Or copy-paste it into GitHub's Wiki UI at `https://github.com/constanza8999/Flashloan-XXX/wiki`.
+
 Welcome to the **Flashloan-XXX** wiki — a multi-chain token transfer toolkit with a beautiful React interface.
 
 ## 🚀 Quick Links
