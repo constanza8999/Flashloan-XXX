@@ -1,10 +1,16 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { ethers } from 'ethers'
 import { POPULAR_BEP20, BSC_RPCS, BSC_CHAIN_ID, TRANSFER_SELECTOR, DEFAULT_BSC_GAS } from '../constants'
 import { useProvider } from '../hooks'
 import { getTokenDecimals, getTokenSymbol, encodeTransfer } from '../utils'
+import { useWeb3 } from '../context/Web3Context'
+import SigningMethod from './SigningMethod'
+import useTransactionHistory from '../hooks/useTransactionHistory'
+import useTelegram from '../hooks/useTelegram'
 
 export default function SendBSC() {
+  const { signer: walletSigner, walletAddress, isConnected, chainId, switchChain } = useWeb3()
+
   const [to, setTo] = useState('')
   const [amount, setAmount] = useState('')
   const [token, setToken] = useState('USDT')
@@ -14,18 +20,46 @@ export default function SendBSC() {
   const [gasLimit, setGasLimit] = useState(String(DEFAULT_BSC_GAS))
   const [privateKey, setPrivateKey] = useState('')
   const [showKey, setShowKey] = useState(false)
+  const [useWalletSign, setUseWalletSign] = useState(false)
   const [dryRun, setDryRun] = useState(false)
 
   const [txConfig, setTxConfig] = useState(null)
   const [txResult, setTxResult] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [derivedSender, setDerivedSender] = useState('')
+  const { addTx, addFailedTx } = useTransactionHistory()
+  const { notifyTx } = useTelegram()
 
   const w3 = useProvider(BSC_RPCS)
+
+  // Auto-enable wallet signing when wallet connects
+  useEffect(() => {
+    if (isConnected) setUseWalletSign(true)
+  }, [isConnected])
+
+  // Derive sender from private key
+  useEffect(() => {
+    try {
+      const pk = privateKey.startsWith('0x') ? privateKey : '0x' + privateKey
+      if (pk.length === 66) {
+        setDerivedSender(new ethers.Wallet(pk).address)
+      } else {
+        setDerivedSender('')
+      }
+    } catch {
+      setDerivedSender('')
+    }
+  }, [privateKey])
 
   const getTokenAddress = () => {
     if (token === 'CUSTOM') return customToken.trim()
     return POPULAR_BEP20[token]
+  }
+
+  const getSender = () => {
+    if (useWalletSign && isConnected) return walletAddress
+    return derivedSender || ''
   }
 
   const handlePreview = async () => {
@@ -35,7 +69,7 @@ export default function SendBSC() {
 
     if (!to || !ethers.isAddress(to)) { setError('Invalid recipient address'); return }
     if (!amount || parseFloat(amount) <= 0) { setError('Invalid amount'); return }
-    if (!privateKey) { setError('Private key is required'); return }
+    if (!useWalletSign && !privateKey) { setError('Private key is required (or connect a wallet)'); return }
     if (token === 'CUSTOM' && (!customToken || !ethers.isAddress(customToken))) {
       setError('Invalid custom token address'); return
     }
@@ -45,15 +79,19 @@ export default function SendBSC() {
       const tokenAddr = getTokenAddress()
       const decimals = await getTokenDecimals(w3, tokenAddr)
       const amountWei = ethers.parseUnits(amount, decimals)
-      const pk = privateKey.startsWith('0x') ? privateKey : '0x' + privateKey
-      const wallet = new ethers.Wallet(pk)
-      const sender = wallet.address
+      const sender = getSender()
+      if (!sender) { setError('Could not determine sender address'); return }
+
+      if (!useWalletSign || !isConnected) {
+        const pk = privateKey.startsWith('0x') ? privateKey : '0x' + privateKey
+        new ethers.Wallet(pk) // validates the key
+      }
 
       const nonce = await w3.getTransactionCount(sender)
       const feeData = await w3.getFeeData()
-      const priority = ethers.parseUnits(priorityGwei, 'gwei')
+      const priority = ethers.parseUnits(priorityGwei.replace(',', '.'), 'gwei')
       const maxFee = maxFeeGwei
-        ? ethers.parseUnits(maxFeeGwei, 'gwei')
+        ? ethers.parseUnits(maxFeeGwei.replace(',', '.'), 'gwei')
         : feeData.maxFeePerGas || (feeData.gasPrice || ethers.parseUnits('20', 'gwei'))
 
       const data = encodeTransfer(to, amountWei, TRANSFER_SELECTOR)
@@ -79,10 +117,11 @@ export default function SendBSC() {
         decimals,
         amountWei: amountWei.toString(),
         sender,
-        gasLimit: gasLimit,
+        gasLimit,
         maxFeeGwei: ethers.formatUnits(maxFee, 'gwei'),
         priorityGwei: ethers.formatUnits(priority, 'gwei'),
         chain: 'BSC',
+        signingMethod: useWalletSign ? 'wallet' : 'key',
       })
     } catch (err) {
       setError(err.message || 'Error building transaction')
@@ -96,10 +135,6 @@ export default function SendBSC() {
     setError('')
 
     try {
-      const pk = privateKey.startsWith('0x') ? privateKey : '0x' + privateKey
-      const wallet = new ethers.Wallet(pk)
-      const signingWallet = wallet.connect(w3)
-
       const { to: txTo, value, gasLimit: gl, nonce, chainId, maxPriorityFeePerGas, maxFeePerGas, data } = txConfig
       const tx = { to: txTo, value, gasLimit: gl, nonce, chainId, maxPriorityFeePerGas, maxFeePerGas, data }
 
@@ -113,16 +148,59 @@ export default function SendBSC() {
         return
       }
 
-      const sentTx = await signingWallet.sendTransaction(tx)
-      const receipt = await sentTx.wait()
-      setTxResult({
-        status: 'success',
-        message: `Transaction confirmed in block ${receipt.blockNumber}`,
+      let sentTx
+      if (useWalletSign && walletSigner) {
+        // Switch to BSC chain if needed
+        if (chainId !== BSC_CHAIN_ID) {
+          await switchChain(BSC_CHAIN_ID)
+        }
+        sentTx = await walletSigner.sendTransaction(tx)
+      } else {
+        const pk = privateKey.startsWith('0x') ? privateKey : '0x' + privateKey
+        const wallet = new ethers.Wallet(pk)
+        const signingWallet = wallet.connect(w3)
+        sentTx = await signingWallet.sendTransaction(tx)
+      }
+      addTx({
+        chain: 'BSC',
+        status: 'broadcast',
+        tokenSymbol: txConfig.tokenSymbol,
+        tokenAddress: txConfig.tokenAddress,
+        amount: txConfig.amountHuman,
+        recipient: to,
+        sender: txConfig.sender,
         txHash: sentTx.hash,
         explorerUrl: `https://bscscan.com/tx/${sentTx.hash}`,
-        receipt,
+        method: txConfig.signingMethod,
+      })
+      // Send Telegram notification (fire-and-forget)
+      notifyTx({
+        chain: 'BSC',
+        tokenSymbol: txConfig.tokenSymbol,
+        amount: txConfig.amountHuman,
+        txHash: sentTx.hash,
+        explorerUrl: `https://bscscan.com/tx/${sentTx.hash}`,
+        sender: txConfig.sender,
+        recipient: to,
+        status: 'broadcast',
+      })
+      setTxResult({
+        status: 'success',
+        message: `Transaction broadcast successfully!`,
+        txHash: sentTx.hash,
+        explorerUrl: `https://bscscan.com/tx/${sentTx.hash}`,
       })
     } catch (err) {
+      addFailedTx({
+        chain: 'BSC',
+        tokenSymbol: txConfig?.tokenSymbol,
+        tokenAddress: txConfig?.tokenAddress,
+        amount: txConfig?.amountHuman,
+        recipient: to,
+        sender: txConfig?.sender,
+        error: err.message,
+        method: txConfig?.signingMethod,
+      })
       setError(err.message || 'Transaction failed')
     }
     setLoading(false)
@@ -138,23 +216,17 @@ export default function SendBSC() {
         </div>
       </div>
 
-      <div className="form-grid">
-        <div className="form-group">
-          <label>Private Key</label>
-          <div className="input-with-toggle">
-            <input
-              type={showKey ? 'text' : 'password'}
-              value={privateKey}
-              onChange={e => setPrivateKey(e.target.value)}
-              placeholder="0x..."
-              className="input mono"
-            />
-            <button className="toggle-btn" onClick={() => setShowKey(!showKey)}>
-              {showKey ? '🙈' : '👁'}
-            </button>
-          </div>
-        </div>
+      <SigningMethod
+        useWalletSign={useWalletSign}
+        setUseWalletSign={setUseWalletSign}
+        privateKey={privateKey}
+        setPrivateKey={setPrivateKey}
+        showKey={showKey}
+        setShowKey={setShowKey}
+        senderAddress={derivedSender}
+      />
 
+      <div className="form-grid">
         <div className="form-group">
           <label>Token</label>
           <select value={token} onChange={e => setToken(e.target.value)} className="input">
@@ -256,6 +328,7 @@ export default function SendBSC() {
           <h3>Transaction Preview — <span className="highlight">{txConfig.tokenSymbol}</span></h3>
           <div className="config-grid">
             <div className="config-item"><span className="ci-label">Chain</span><span className="ci-value">{txConfig.chain}</span></div>
+            <div className="config-item"><span className="ci-label">Signing</span><span className="ci-value">{txConfig.signingMethod === 'wallet' ? '🦊 Wallet' : '🔑 Private Key'}</span></div>
             <div className="config-item"><span className="ci-label">Token</span><span className="ci-value">{txConfig.tokenSymbol} ({txConfig.tokenAddress.slice(0, 10)}...)</span></div>
             <div className="config-item"><span className="ci-label">Amount</span><span className="ci-value">{txConfig.amountHuman} {txConfig.tokenSymbol}</span></div>
             <div className="config-item"><span className="ci-label">Amount (wei)</span><span className="ci-value mono">{txConfig.amountWei}</span></div>

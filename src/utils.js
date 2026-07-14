@@ -1,4 +1,5 @@
 import { ethers } from 'ethers'
+import { KNOWN_TOKEN_DECIMALS } from './constants'
 
 const ERC20_META_ABI = [
   'function decimals() view returns (uint8)',
@@ -8,8 +9,15 @@ const ERC20_META_ABI = [
 
 /**
  * Fetch token decimals from the chain.
+ * Uses cached KNOWN_TOKEN_DECIMALS first to avoid expensive RPC calls.
  */
 export async function getTokenDecimals(provider, address) {
+  const key = address.toLowerCase()
+  // Return cached decimals instantly — no RPC call needed for known tokens
+  if (KNOWN_TOKEN_DECIMALS[key] !== undefined) {
+    return KNOWN_TOKEN_DECIMALS[key]
+  }
+  // Fall back to on-chain lookup for unknown tokens
   const contract = new ethers.Contract(address, ERC20_META_ABI, provider)
   return Number(await contract.decimals())
 }

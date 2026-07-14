@@ -2,9 +2,9 @@ import React, { useState } from 'react'
 import { ethers } from 'ethers'
 import { POPULAR_BEP20, POPULAR_ERC20, BSC_RPCS, ETH_RPCS } from '../constants'
 import { useProvider } from '../hooks'
+import { getTokenDecimals, getTokenSymbol } from '../utils'
 
 const ERC20_ABI = [
-  'function decimals() view returns (uint8)',
   'function symbol() view returns (string)',
   'function name() view returns (string)',
   'function totalSupply() view returns (uint256)',
@@ -41,9 +41,9 @@ export default function TokenInfo() {
     try {
       const contract = new ethers.Contract(addr, ERC20_ABI, w3)
       const [symbol, name, decimals, totalSupply, balance] = await Promise.all([
-        contract.symbol().catch(() => '?'),
+        getTokenSymbol(w3, addr).catch(() => '?'),
         contract.name().catch(() => '?'),
-        contract.decimals().catch(() => '?'),
+        getTokenDecimals(w3, addr).catch(() => '?'),
         contract.totalSupply().catch(() => null),
         walletAddress && ethers.isAddress(walletAddress)
           ? contract.balanceOf(ethers.getAddress(walletAddress)).catch(() => null)

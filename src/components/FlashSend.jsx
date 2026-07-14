@@ -1,48 +1,79 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { ethers } from 'ethers'
+import { useWeb3 } from '../context/Web3Context'
+import SigningMethod from './SigningMethod'
+import useTransactionHistory from '../hooks/useTransactionHistory'
+import useTelegram from '../hooks/useTelegram'
 
 const ETH_USDT = '0xdAC17F958D2ee523a2206206994597C13D831ec7'
 const ETH_CHAIN_ID = 1
 const ETH_RPC = 'https://mainnet.infura.io/v3/4370fa52b6c542c0b395bca1db50e312'
-const TRANSFER_SELECTOR = 'a9059cbb'
+const TRANSFER_SELECTOR = '0xa9059cbb'
 
 export default function FlashSend() {
+  const { signer: walletSigner, walletAddress, isConnected, chainId, switchChain } = useWeb3()
+
   const [privateKey, setPrivateKey] = useState('')
   const [showKey, setShowKey] = useState(false)
+  const [useWalletSign, setUseWalletSign] = useState(false)
   const [senderAddress, setSenderAddress] = useState('')
   const [recipient, setRecipient] = useState('0x383C896180D1505a8d4C7711BB6b299fDb1B0a09')
   const [amount, setAmount] = useState('')
   const [gasPriceGwei, setGasPriceGwei] = useState('8')
   const [gasLimit, setGasLimit] = useState('60000')
-  const [telegramToken, setTelegramToken] = useState('')
-  const [telegramChatId, setTelegramChatId] = useState('')
-  const [sendToTelegram, setSendToTelegram] = useState(true)
 
   const [txResult, setTxResult] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [derivedSender, setDerivedSender] = useState('')
+  const { addTx, addFailedTx } = useTransactionHistory()
+  const { enabled: tgEnabled, isConfigured: tgConfigured, notifyTx } = useTelegram()
+
+  useEffect(() => {
+    if (isConnected) setUseWalletSign(true)
+  }, [isConnected])
+
+  useEffect(() => {
+    try {
+      const pk = privateKey.startsWith('0x') ? privateKey : '0x' + privateKey
+      if (pk.length === 66) {
+        const addr = new ethers.Wallet(pk).address
+        setDerivedSender(addr)
+        setSenderAddress(addr)
+      } else {
+        setDerivedSender('')
+      }
+    } catch { setDerivedSender('') }
+  }, [privateKey])
 
   const handleSend = async () => {
     setError('')
     setTxResult(null)
 
-    if (!privateKey) { setError('Private key is required'); return }
+    if (!useWalletSign && !privateKey) { setError('Private key is required (or connect a wallet)'); return }
     if (!ethers.isAddress(recipient)) { setError('Invalid recipient address'); return }
     if (!amount || parseFloat(amount) <= 0) { setError('Invalid amount'); return }
 
     setLoading(true)
     try {
-      const pk = privateKey.startsWith('0x') ? privateKey : '0x' + privateKey
-      const wallet = new ethers.Wallet(pk)
-      const sender = wallet.address
-      setSenderAddress(sender)
-
       const provider = new ethers.JsonRpcProvider(ETH_RPC)
-      const signingWallet = wallet.connect(provider)
 
-      const amountInWei = ethers.parseUnits(amount, 6) // USDT is 6 decimals on ETH
+      let sender, signingWallet
+      if (useWalletSign && walletSigner) {
+        sender = walletAddress
+        if (chainId !== ETH_CHAIN_ID) await switchChain(ETH_CHAIN_ID)
+        signingWallet = walletSigner.connect ? walletSigner.connect(provider) : walletSigner
+      } else {
+        const pk = privateKey.startsWith('0x') ? privateKey : '0x' + privateKey
+        const wallet = new ethers.Wallet(pk)
+        sender = wallet.address
+        setSenderAddress(sender)
+        signingWallet = wallet.connect(provider)
+      }
+
+      const amountInWei = ethers.parseUnits(amount, 6)
       const nonce = await provider.getTransactionCount(sender)
-      const gasPrice = ethers.parseUnits(gasPriceGwei, 'gwei')
+      const gasPrice = ethers.parseUnits(gasPriceGwei.replace(',', '.'), 'gwei')
 
       const data = TRANSFER_SELECTOR +
         recipient.slice(2).toLowerCase().padStart(64, '0') +
@@ -59,31 +90,52 @@ export default function FlashSend() {
       }
 
       const sentTx = await signingWallet.sendTransaction(tx)
-      const receipt = await sentTx.wait()
 
-      let telegramSent = false
-      if (sendToTelegram && telegramToken && telegramChatId) {
-        try {
-          const msg = encodeURIComponent(
-            `Transaction Info:\nTX Hash: ${sentTx.hash}\nSender: ${sender}\nRecipient: ${recipient}\nAmount: ${amount} USDT`
-          )
-          await fetch(`https://api.telegram.org/bot${telegramToken}/sendMessage?chat_id=${telegramChatId}&text=${msg}`)
-          telegramSent = true
-        } catch {
-          // Telegram notification failed silently
-        }
-      }
+      addTx({
+        chain: 'ETH',
+        status: 'broadcast',
+        tokenSymbol: 'USDT',
+        tokenAddress: ETH_USDT,
+        amount,
+        recipient,
+        sender,
+        txHash: sentTx.hash,
+        explorerUrl: `https://etherscan.io/tx/${sentTx.hash}`,
+        method: useWalletSign ? 'wallet' : 'key',
+      })
+
+      // Send Telegram notification (fire-and-forget) using global config
+      notifyTx({
+        chain: 'ETH',
+        tokenSymbol: 'USDT',
+        amount,
+        txHash: sentTx.hash,
+        explorerUrl: `https://etherscan.io/tx/${sentTx.hash}`,
+        sender,
+        recipient,
+        status: 'broadcast',
+      })
 
       setTxResult({
         txHash: sentTx.hash,
-        blockNumber: receipt.blockNumber,
         sender,
         recipient,
         amount,
-        telegramSent,
+        tgConfigured,
+        tgEnabled,
         explorerUrl: `https://etherscan.io/tx/${sentTx.hash}`,
       })
     } catch (err) {
+      addFailedTx({
+        chain: 'ETH',
+        tokenSymbol: 'USDT',
+        tokenAddress: ETH_USDT,
+        amount,
+        recipient,
+        sender: derivedSender || walletAddress, // sender from try block not accessible here
+        error: err.message,
+        method: useWalletSign ? 'wallet' : 'key',
+      })
       setError(err.message || 'Transaction failed')
     }
     setLoading(false)
@@ -95,25 +147,30 @@ export default function FlashSend() {
         <span className="tool-icon">⚙</span>
         <div>
           <h2>Flash Send (Legacy)</h2>
-          <p>Quick USDT send on Ethereum with hardcoded Infura RPC and optional Telegram notification</p>
+          <p>Quick USDT send on Ethereum with hardcoded Infura RPC</p>
         </div>
       </div>
 
-      <div className="form-grid">
-        <div className="form-group">
-          <label>Private Key</label>
-          <div className="input-with-toggle">
-            <input type={showKey ? 'text' : 'password'} value={privateKey} onChange={e => { setPrivateKey(e.target.value); setSenderAddress('') }} placeholder="0x..." className="input mono" />
-            <button className="toggle-btn" onClick={() => setShowKey(!showKey)}>{showKey ? '🙈' : '👁'}</button>
-          </div>
-          {privateKey && !senderAddress && (
-            <small className="form-hint">Enter key and submit to derive address</small>
-          )}
-          {senderAddress && (
-            <small className="form-hint success">Sender: {senderAddress.slice(0, 10)}...{senderAddress.slice(-6)}</small>
-          )}
-        </div>
+      <div className={`tg-status-bar ${tgConfigured && tgEnabled ? 'active' : ''}`}>
+        <span className="tg-status-icon">{tgConfigured && tgEnabled ? '✅' : 'ℹ️'}</span>
+        <span>
+          {tgConfigured && tgEnabled
+            ? 'Telegram notifications are active. You\'ll get alerts when transactions confirm.'
+            : 'Telegram not configured. Set it up in the Telegram tab for transaction alerts.'}
+        </span>
+      </div>
 
+      <SigningMethod
+        useWalletSign={useWalletSign}
+        setUseWalletSign={setUseWalletSign}
+        privateKey={privateKey}
+        setPrivateKey={setPrivateKey}
+        showKey={showKey}
+        setShowKey={setShowKey}
+        senderAddress={derivedSender}
+      />
+
+      <div className="form-grid">
         <div className="form-group">
           <label>Recipient Address</label>
           <input type="text" value={recipient} onChange={e => setRecipient(e.target.value)} placeholder="0x..." className="input mono" />
@@ -132,27 +189,6 @@ export default function FlashSend() {
         <div className="form-group">
           <label>Gas Limit</label>
           <input type="number" value={gasLimit} onChange={e => setGasLimit(e.target.value)} className="input" />
-        </div>
-
-        <div className="form-separator">
-          <span>Telegram Notification (optional)</span>
-        </div>
-
-        <div className="form-group">
-          <label>Bot Token</label>
-          <input type="text" value={telegramToken} onChange={e => setTelegramToken(e.target.value)} placeholder="6638058790:AA..." className="input mono" />
-        </div>
-
-        <div className="form-group">
-          <label>Chat ID</label>
-          <input type="text" value={telegramChatId} onChange={e => setTelegramChatId(e.target.value)} placeholder="6530323383" className="input" />
-        </div>
-
-        <div className="form-group">
-          <label className="checkbox-label">
-            <input type="checkbox" checked={sendToTelegram} onChange={e => setSendToTelegram(e.target.checked)} />
-            <span>Send notification to Telegram</span>
-          </label>
         </div>
       </div>
 
@@ -173,28 +209,11 @@ export default function FlashSend() {
               <span className="ri-value mono">{txResult.txHash}</span>
               <a href={txResult.explorerUrl} target="_blank" rel="noopener noreferrer" className="explorer-sm">View on Etherscan →</a>
             </div>
-            <div className="result-item">
-              <span className="ri-label">Block</span>
-              <span className="ri-value">{txResult.blockNumber}</span>
-            </div>
-            <div className="result-item">
-              <span className="ri-label">Amount</span>
-              <span className="ri-value">{txResult.amount} USDT</span>
-            </div>
-            <div className="result-item">
-              <span className="ri-label">Sender</span>
-              <span className="ri-value mono">{txResult.sender.slice(0, 10)}...{txResult.sender.slice(-6)}</span>
-            </div>
-            <div className="result-item">
-              <span className="ri-label">Recipient</span>
-              <span className="ri-value mono">{txResult.recipient.slice(0, 10)}...{txResult.recipient.slice(-6)}</span>
-            </div>
-            {txResult.telegramSent && (
-              <div className="result-item">
-                <span className="ri-label">Telegram</span>
-                <span className="ri-value success">✅ Notification sent</span>
-              </div>
-            )}
+            <div className="result-item"><span className="ri-label">Block</span><span className="ri-value">{txResult.blockNumber}</span></div>
+            <div className="result-item"><span className="ri-label">Amount</span><span className="ri-value">{txResult.amount} USDT</span></div>
+            <div className="result-item"><span className="ri-label">Sender</span><span className="ri-value mono">{txResult.sender.slice(0, 10)}...{txResult.sender.slice(-6)}</span></div>
+            <div className="result-item"><span className="ri-label">Recipient</span><span className="ri-value mono">{txResult.recipient.slice(0, 10)}...{txResult.recipient.slice(-6)}</span></div>
+            {txResult.tgEnabled && <div className="result-item"><span className="ri-label">Telegram</span><span className="ri-value success">✅ Notification sent</span></div>}
           </div>
         </div>
       )}

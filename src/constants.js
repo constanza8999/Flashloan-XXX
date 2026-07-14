@@ -3,19 +3,39 @@ import { ethers } from 'ethers'
 // RPC endpoints
 export const BSC_RPCS = [
   'https://bsc-dataseed.binance.org/',
-  'https://bsc-dataseed1.defibit.io/',
-  'https://bsc-dataseed1.ninicoin.io/',
-  'https://bsc-dataseed2.defibit.io/',
+  'https://bsc-dataseed1.binance.org/',
+  'https://bsc-dataseed2.binance.org/',
+  'https://bsc-dataseed3.binance.org/',
+  'https://bsc-dataseed4.binance.org/',
   'https://bsc.publicnode.com',
+  'https://binance.llamarpc.com',
 ]
 
 export const ETH_RPCS = [
   'https://eth.llamarpc.com',
   'https://cloudflare-eth.com',
-  'https://rpc.etherbase.com',
+  'https://rpc.ankr.com/eth',
+  'https://ethereum-rpc.publicnode.com',
+  'https://eth.drpc.org',
 ]
 
 export const ETH_PROTECT_RPC = 'https://rpc.flashbots.net'
+export const FLASHBOTS_RELAY_RPC = 'https://relay.flashbots.net'
+
+// Polygon RPCs
+export const POLYGON_RPCS = [
+  'https://polygon-rpc.com',
+  'https://rpc-mainnet.maticvigil.com',
+  'https://rpc-mainnet.matic.network',
+  'https://polygon.llamarpc.com',
+]
+
+// Arbitrum RPCs
+export const ARBITRUM_RPCS = [
+  'https://arb1.arbitrum.io/rpc',
+  'https://arbitrum.llamarpc.com',
+  'https://arbitrum-mainnet.infura.io/v3/9aa3d95b3bc440fa88ea12eaa4456161',
+]
 
 // Token contracts
 export const BSC_USDT = '0x55d398326f99059fF775485246999027B3197955'
@@ -24,6 +44,8 @@ export const ETH_USDT = '0xdAC17F958D2ee523a2206206994597C13D831ec7'
 // Chain IDs
 export const BSC_CHAIN_ID = 56
 export const ETH_CHAIN_ID = 1
+export const POLYGON_CHAIN_ID = 137
+export const ARBITRUM_CHAIN_ID = 42161
 
 // ERC20/BEP20 transfer(address,uint256) selector
 export const TRANSFER_SELECTOR = '0xa9059cbb'
@@ -31,6 +53,8 @@ export const TRANSFER_SELECTOR = '0xa9059cbb'
 // Gas defaults
 export const DEFAULT_BSC_GAS = 100000
 export const DEFAULT_ETH_GAS = 100000
+export const DEFAULT_POLYGON_GAS = 200000
+export const DEFAULT_ARBITRUM_GAS = 300000
 
 // Popular BEP20 tokens on BSC
 export const POPULAR_BEP20 = {
@@ -48,6 +72,34 @@ export const POPULAR_BEP20 = {
   DOT:   '0x7083609fCE4d1d8Dc0C979AAb8c869Ea2C873402',
   LINK:  '0xF8A0BF9cF54Bb92F17374d9e9A321E6f111A0B18',
   MATIC: '0xCC42724C6683B7E573F7d1e4A4120f3aD4E4C5bA',
+}
+
+// Popular tokens on Polygon
+export const POPULAR_POLYGON = {
+  USDT:  '0xc2132D05D31c914a87C6611C10748AEb04B58e8F',
+  USDC:  '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359',
+  USDCe: '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174',
+  DAI:   '0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063',
+  WETH:  '0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619',
+  WBTC:  '0x1bfd67037b42cf73acF2047067bd4F2C47D9BfD6',
+  LINK:  '0x53E0bca35eC356BD5ddDFebbD1Fc0fD03FaBad39',
+  WMATIC:'0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270',
+  CRV:   '0x172370d5Cd63279eFa6d502DAB29171933a610AF',
+  AAVE:  '0xD6DF932A45C0f255f85145f286eA0b292B21C90B',
+}
+
+// Popular tokens on Arbitrum
+export const POPULAR_ARBITRUM = {
+  USDT:  '0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9',
+  USDC:  '0xaf88d065e77c8cC2239327C5EDb3A432268e5831',
+  USDCe: '0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8',
+  DAI:   '0xDA10009cBd5D07dd0CeCc66161FC93D7c9000da1',
+  WETH:  '0x82aF49447D8a07e3bd95BD0d56f35241523fBab1',
+  WBTC:  '0x2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f',
+  ARB:   '0x912CE59144291C1204dE78fC2D2A8EaFB0C6e5c1',
+  LINK:  '0xf97f4df75117a78c1A5a0DBb814Af92458539FB4',
+  UNI:   '0xFa7F8980b0f1E64A2062791cc3b0871572f1F7f0',
+  GMX:   '0xfc5A1A6EB076a2C7aD06eD22C90d7E710E35ad0a',
 }
 
 // Popular ERC20 tokens on Ethereum
@@ -80,6 +132,18 @@ const _ETH_DECIMALS = {
   UNI: 18, LINK: 18, AAVE: 18,
 }
 
+const _POLYGON_DECIMALS = {
+  USDT: 6, USDC: 6, USDCe: 6, DAI: 18,
+  WETH: 18, WBTC: 8, LINK: 18, WMATIC: 18,
+  CRV: 18, AAVE: 18,
+}
+
+const _ARBITRUM_DECIMALS = {
+  USDT: 6, USDC: 6, USDCe: 6, DAI: 18,
+  WETH: 18, WBTC: 8, ARB: 18, LINK: 18,
+  UNI: 18, GMX: 18,
+}
+
 Object.entries(_BSC_DECIMALS).forEach(([sym, dec]) => {
   const addr = POPULAR_BEP20[sym]
   if (addr) _KNOWN_DECIMALS[addr.toLowerCase()] = dec
@@ -87,6 +151,16 @@ Object.entries(_BSC_DECIMALS).forEach(([sym, dec]) => {
 
 Object.entries(_ETH_DECIMALS).forEach(([sym, dec]) => {
   const addr = POPULAR_ERC20[sym]
+  if (addr) _KNOWN_DECIMALS[addr.toLowerCase()] = dec
+})
+
+Object.entries(_POLYGON_DECIMALS).forEach(([sym, dec]) => {
+  const addr = POPULAR_POLYGON[sym]
+  if (addr) _KNOWN_DECIMALS[addr.toLowerCase()] = dec
+})
+
+Object.entries(_ARBITRUM_DECIMALS).forEach(([sym, dec]) => {
+  const addr = POPULAR_ARBITRUM[sym]
   if (addr) _KNOWN_DECIMALS[addr.toLowerCase()] = dec
 })
 

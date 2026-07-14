@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { ethers } from 'ethers'
-import { POPULAR_ERC20, ETH_RPCS, ETH_PROTECT_RPC, ETH_CHAIN_ID, TRANSFER_SELECTOR, DEFAULT_ETH_GAS } from '../constants'
+import { POPULAR_ARBITRUM, ARBITRUM_RPCS, ARBITRUM_CHAIN_ID, TRANSFER_SELECTOR, DEFAULT_ARBITRUM_GAS } from '../constants'
 import { useProvider } from '../hooks'
 import { getTokenDecimals, getTokenSymbol, encodeTransfer } from '../utils'
 import { useWeb3 } from '../context/Web3Context'
@@ -8,16 +8,16 @@ import SigningMethod from './SigningMethod'
 import useTransactionHistory from '../hooks/useTransactionHistory'
 import useTelegram from '../hooks/useTelegram'
 
-export default function SendETH() {
+export default function SendArbitrum() {
   const { signer: walletSigner, walletAddress, isConnected, chainId, switchChain } = useWeb3()
 
   const [to, setTo] = useState('')
   const [amount, setAmount] = useState('')
   const [token, setToken] = useState('USDT')
   const [customToken, setCustomToken] = useState('')
-  const [priorityGwei, setPriorityGwei] = useState('1.0')
+  const [priorityGwei, setPriorityGwei] = useState('0.1')
   const [maxFeeGwei, setMaxFeeGwei] = useState('')
-  const [gasLimit, setGasLimit] = useState(String(DEFAULT_ETH_GAS))
+  const [gasLimit, setGasLimit] = useState(String(DEFAULT_ARBITRUM_GAS))
   const [privateKey, setPrivateKey] = useState('')
   const [showKey, setShowKey] = useState(false)
   const [useWalletSign, setUseWalletSign] = useState(false)
@@ -31,7 +31,7 @@ export default function SendETH() {
   const { addTx, addFailedTx } = useTransactionHistory()
   const { notifyTx } = useTelegram()
 
-  const w3 = useProvider(ETH_RPCS)
+  const w3 = useProvider(ARBITRUM_RPCS)
 
   useEffect(() => {
     if (isConnected) setUseWalletSign(true)
@@ -50,7 +50,7 @@ export default function SendETH() {
 
   const getTokenAddress = () => {
     if (token === 'CUSTOM') return customToken.trim()
-    return POPULAR_ERC20[token]
+    return POPULAR_ARBITRUM[token]
   }
 
   const getSender = () => {
@@ -78,12 +78,17 @@ export default function SendETH() {
       const sender = getSender()
       if (!sender) { setError('Could not determine sender address'); return }
 
+      if (!useWalletSign || !isConnected) {
+        const pk = privateKey.startsWith('0x') ? privateKey : '0x' + privateKey
+        new ethers.Wallet(pk)
+      }
+
       const nonce = await w3.getTransactionCount(sender)
       const feeData = await w3.getFeeData()
       const priority = ethers.parseUnits(priorityGwei.replace(',', '.'), 'gwei')
       const maxFee = maxFeeGwei
         ? ethers.parseUnits(maxFeeGwei.replace(',', '.'), 'gwei')
-        : feeData.maxFeePerGas || (feeData.gasPrice || ethers.parseUnits('20', 'gwei'))
+        : feeData.maxFeePerGas || (feeData.gasPrice || ethers.parseUnits('0.3', 'gwei'))
 
       const data = encodeTransfer(to, amountWei, TRANSFER_SELECTOR)
 
@@ -92,7 +97,7 @@ export default function SendETH() {
         value: 0n,
         gasLimit: BigInt(gasLimit),
         nonce,
-        chainId: ETH_CHAIN_ID,
+        chainId: ARBITRUM_CHAIN_ID,
         maxPriorityFeePerGas: priority,
         maxFeePerGas: maxFee,
         data,
@@ -111,7 +116,7 @@ export default function SendETH() {
         gasLimit,
         maxFeeGwei: ethers.formatUnits(maxFee, 'gwei'),
         priorityGwei: ethers.formatUnits(priority, 'gwei'),
-        chain: 'ETH (Flashbots)',
+        chain: 'Arbitrum',
         signingMethod: useWalletSign ? 'wallet' : 'key',
       })
     } catch (err) {
@@ -130,32 +135,23 @@ export default function SendETH() {
       const tx = { to: txTo, value, gasLimit: gl, nonce, chainId, maxPriorityFeePerGas, maxFeePerGas, data }
 
       if (dryRun) {
-        setTxResult({
-          status: 'dry-run',
-          message: 'Transaction built successfully (DRY RUN — not submitted via Flashbots)',
-          details: tx,
-        })
+        setTxResult({ status: 'dry-run', message: 'Transaction built successfully (DRY RUN — not submitted)', details: tx })
         setLoading(false)
         return
       }
 
       let sentTx
       if (useWalletSign && walletSigner) {
-        if (chainId !== ETH_CHAIN_ID) await switchChain(ETH_CHAIN_ID)
-        // Use Flashbots Protect RPC with wallet signer
-        const protectProvider = new ethers.JsonRpcProvider(ETH_PROTECT_RPC)
-        const connectedSigner = walletSigner.connect ? walletSigner.connect(protectProvider) : walletSigner
-        sentTx = await connectedSigner.sendTransaction(tx)
+        if (chainId !== ARBITRUM_CHAIN_ID) await switchChain(ARBITRUM_CHAIN_ID)
+        sentTx = await walletSigner.sendTransaction(tx)
       } else {
         const pk = privateKey.startsWith('0x') ? privateKey : '0x' + privateKey
         const wallet = new ethers.Wallet(pk)
-        const protectProvider = new ethers.JsonRpcProvider(ETH_PROTECT_RPC)
-        const signingWallet = wallet.connect(protectProvider)
+        const signingWallet = wallet.connect(w3)
         sentTx = await signingWallet.sendTransaction(tx)
       }
-
       addTx({
-        chain: 'ETH (Flashbots)',
+        chain: 'Arbitrum',
         status: 'broadcast',
         tokenSymbol: txConfig.tokenSymbol,
         tokenAddress: txConfig.tokenAddress,
@@ -163,29 +159,28 @@ export default function SendETH() {
         recipient: to,
         sender: txConfig.sender,
         txHash: sentTx.hash,
-        explorerUrl: `https://protect.flashbots.net/tx/${sentTx.hash}`,
+        explorerUrl: `https://arbiscan.io/tx/${sentTx.hash}`,
         method: txConfig.signingMethod,
       })
-      // Send Telegram notification (fire-and-forget)
       notifyTx({
-        chain: 'ETH (Flashbots)',
+        chain: 'Arbitrum',
         tokenSymbol: txConfig.tokenSymbol,
         amount: txConfig.amountHuman,
         txHash: sentTx.hash,
-        explorerUrl: `https://protect.flashbots.net/tx/${sentTx.hash}`,
+        explorerUrl: `https://arbiscan.io/tx/${sentTx.hash}`,
         sender: txConfig.sender,
         recipient: to,
         status: 'broadcast',
       })
       setTxResult({
         status: 'success',
-        message: `Transaction broadcast via Flashbots!`,
+        message: 'Transaction broadcast on Arbitrum!',
         txHash: sentTx.hash,
-        explorerUrl: `https://protect.flashbots.net/tx/${sentTx.hash}`,
+        explorerUrl: `https://arbiscan.io/tx/${sentTx.hash}`,
       })
     } catch (err) {
       addFailedTx({
-        chain: 'ETH (Flashbots)',
+        chain: 'Arbitrum',
         tokenSymbol: txConfig?.tokenSymbol,
         tokenAddress: txConfig?.tokenAddress,
         amount: txConfig?.amountHuman,
@@ -202,10 +197,10 @@ export default function SendETH() {
   return (
     <div className="tool-page">
       <div className="tool-header">
-        <span className="tool-icon">🛡</span>
+        <span className="tool-icon">🌀</span>
         <div>
-          <h2>Send ETH via Flashbots Protect</h2>
-          <p>Send ERC20 tokens on Ethereum mainnet with MEV protection</p>
+          <h2>Send Arbitrum Tokens</h2>
+          <p>Transfer tokens on Arbitrum One with low-fee EIP-1559 estimation</p>
         </div>
       </div>
 
@@ -223,7 +218,7 @@ export default function SendETH() {
         <div className="form-group">
           <label>Token</label>
           <select value={token} onChange={e => setToken(e.target.value)} className="input">
-            {Object.entries(POPULAR_ERC20).map(([sym, addr]) => (
+            {Object.entries(POPULAR_ARBITRUM).map(([sym, addr]) => (
               <option key={sym} value={sym}>{sym} — {addr.slice(0, 8)}...</option>
             ))}
             <option value="CUSTOM">Custom Token</option>
@@ -240,17 +235,17 @@ export default function SendETH() {
 
         <div className="form-group">
           <label>Amount (human units)</label>
-          <input type="text" value={amount} onChange={e => setAmount(e.target.value)} placeholder="e.g. 500" className="input" />
+          <input type="text" value={amount} onChange={e => setAmount(e.target.value)} placeholder="e.g. 1000" className="input" />
         </div>
 
         <div className="form-group">
           <label>Priority Fee (Gwei)</label>
-          <input type="number" step="0.1" value={priorityGwei} onChange={e => setPriorityGwei(e.target.value)} className="input" />
+          <input type="number" step="0.01" value={priorityGwei} onChange={e => setPriorityGwei(e.target.value)} className="input" />
         </div>
 
         <div className="form-group">
           <label>Max Fee (Gwei) — optional</label>
-          <input type="number" step="0.1" value={maxFeeGwei} onChange={e => setMaxFeeGwei(e.target.value)} placeholder="Auto from base fee" className="input" />
+          <input type="number" step="0.01" value={maxFeeGwei} onChange={e => setMaxFeeGwei(e.target.value)} placeholder="Auto from base fee" className="input" />
         </div>
 
         <div className="form-group">
@@ -272,7 +267,7 @@ export default function SendETH() {
         </button>
         {txConfig && (
           <button className="btn btn-success" onClick={handleSend} disabled={loading}>
-            {dryRun ? '📋 Simulate' : '🚀 Send via Flashbots'}
+            {dryRun ? '📋 Simulate' : '🚀 Send Transaction'}
           </button>
         )}
       </div>
@@ -302,13 +297,13 @@ export default function SendETH() {
 
       {txResult && (
         <div className={`result-panel ${txResult.status}`}>
-          <h3>{txResult.status === 'success' ? '✅ Sent via Flashbots!' : '📋 Dry Run Complete'}</h3>
+          <h3>{txResult.status === 'success' ? '✅ Transaction Broadcast' : '📋 Dry Run Complete'}</h3>
           <p>{txResult.message}</p>
           {txResult.txHash && (
             <div className="result-hash">
               <span className="mono">{txResult.txHash}</span>
               <a href={txResult.explorerUrl} target="_blank" rel="noopener noreferrer" className="explorer-link">
-                View on Flashbots Tracker →
+                View on Arbiscan →
               </a>
             </div>
           )}

@@ -1,4 +1,5 @@
 import React from 'react'
+import { useWeb3 } from '../context/Web3Context'
 
 const QUICK_ACTIONS = [
   {
@@ -14,6 +15,20 @@ const QUICK_ACTIONS = [
     desc: 'Send ERC20 tokens on Ethereum mainnet with MEV protection via Flashbots Protect',
     icon: '🛡',
     color: '#627EEA',
+  },
+  {
+    id: 'send-polygon',
+    title: 'Send Polygon Tokens',
+    desc: 'Transfer tokens on Polygon (MATIC) with EIP-1559 fee estimation',
+    icon: '🔶',
+    color: '#8247E5',
+  },
+  {
+    id: 'send-arbitrum',
+    title: 'Send Arbitrum Tokens',
+    desc: 'Transfer tokens on Arbitrum One with low-fee EIP-1559 estimation',
+    icon: '🌀',
+    color: '#2D374B',
   },
   {
     id: 'token-info',
@@ -37,6 +52,13 @@ const QUICK_ACTIONS = [
     color: '#A855F7',
   },
   {
+    id: 'flashbots-bundle',
+    title: 'Gasless Flashbots Bundle',
+    desc: 'Submit token transfers with zero gas price via Flashbots bundle relay (experimental)',
+    icon: '⚡',
+    color: '#F59E0B',
+  },
+  {
     id: 'flash-send',
     title: 'Flash Send',
     desc: 'Quick hardcoded USDT send with Telegram notification (legacy)',
@@ -46,11 +68,60 @@ const QUICK_ACTIONS = [
 ]
 
 const NETWORK_INFO = [
-  { label: 'BSC RPCs', value: '5 endpoints', detail: 'Including publicnode.com' },
-  { label: 'ETH RPCs', value: '3 endpoints', detail: 'Including Flashbots Protect' },
-  { label: 'Supported Tokens', value: '14 BSC • 10 ETH', detail: 'USDT, USDC, DAI, WBNB, WBTC, etc.' },
-  { label: 'Chain IDs', value: 'BSC: 56 • ETH: 1', detail: 'Mainnet only' },
+  { label: 'Chains', value: '4 chains', detail: 'BSC, Ethereum, Polygon, Arbitrum' },
+  { label: 'RPCs', value: '14 endpoints', detail: 'With fallback for each chain' },
+  { label: 'Supported Tokens', value: '48 tokens', detail: 'USDT, USDC, DAI, WETH, WBTC, etc.' },
+  { label: 'Chain IDs', value: '56 • 1 • 137 • 42161', detail: 'All mainnet' },
 ]
+
+function WalletStatus() {
+  const { isConnected, walletAddress, walletType, chainId, chainName, connectWallet, disconnect } = useWeb3()
+
+  if (!isConnected || !walletAddress) {
+    return (
+      <div className="wallet-status-card disconnected">
+        <div className="ws-header">
+          <span className="ws-icon">👛</span>
+          <div>
+            <strong>No Wallet Connected</strong>
+            <p>Connect a wallet to sign transactions without entering private keys</p>
+          </div>
+        </div>
+        <div className="ws-actions">
+          <button className="btn btn-primary" onClick={() => connectWallet('metamask')} style={{ fontSize: 12, padding: '8px 16px' }}>
+            🦊 Connect MetaMask
+          </button>
+          <button className="btn btn-primary" onClick={() => connectWallet('walletconnect')} style={{ fontSize: 12, padding: '8px 16px', background: 'var(--accent-purple)' }}>
+            🔗 WalletConnect
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  const formatAddr = (addr) => `${addr.slice(0, 8)}...${addr.slice(-6)}`
+  return (
+    <div className="wallet-status-card connected">
+      <div className="ws-header">
+        <span className="ws-icon" style={{ fontSize: 24 }}>{walletType === 'metamask' ? '🦊' : '🔗'}</span>
+        <div>
+          <strong>Wallet Connected</strong>
+          <p className="ws-address">{formatAddr(walletAddress)}</p>
+        </div>
+        <span className="ws-badge">{chainName}</span>
+      </div>
+      <div className="ws-details">
+        <span className="ws-detail"><strong>Type:</strong> {walletType === 'metamask' ? 'MetaMask' : 'WalletConnect'}</span>
+        <span className="ws-detail"><strong>Chain ID:</strong> {chainId}</span>
+      </div>
+      <div className="ws-actions">
+        <button className="btn btn-danger" onClick={disconnect} style={{ fontSize: 12, padding: '6px 14px' }}>
+          Disconnect
+        </button>
+      </div>
+    </div>
+  )
+}
 
 export default function Dashboard({ onNavigate }) {
   return (
@@ -59,10 +130,15 @@ export default function Dashboard({ onNavigate }) {
         <div className="hero-badge">Multi-Chain Suite</div>
         <h1 className="hero-title">Token Transfer Toolkit</h1>
         <p className="hero-desc">
-          A comprehensive multi-chain token transfer interface supporting <strong>Binance Smart Chain</strong>{' '}
-          and <strong>Ethereum</strong> with Flashbots MEV protection, auto-bot scheduling, mempool monitoring, and more.
+          A comprehensive multi-chain token transfer interface supporting <strong>BSC</strong>, <strong>Ethereum</strong>,{' '}
+          <strong>Polygon</strong>, and <strong>Arbitrum</strong> with Flashbots MEV protection, auto-bot scheduling, mempool monitoring, and more.
         </p>
       </div>
+
+      <section className="section">
+        <h2 className="section-title">Wallet</h2>
+        <WalletStatus />
+      </section>
 
       <div className="network-strip">
         {NETWORK_INFO.map((item, i) => (
@@ -106,10 +182,10 @@ export default function Dashboard({ onNavigate }) {
             </div>
           </div>
           <div className="security-card info">
-            <span className="sec-icon">ℹ️</span>
+            <span className="sec-icon">🦊</span>
             <div>
-              <strong>Flashbots Protect</strong>
-              <p>ETH sends are routed through Flashbots Protect for MEV protection. Real gas fees apply.</p>
+              <strong>Wallet Support Added</strong>
+              <p>Use MetaMask or WalletConnect to sign transactions without entering private keys.</p>
             </div>
           </div>
           <div className="security-card info">

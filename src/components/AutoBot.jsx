@@ -1,6 +1,9 @@
-import React, { useState, useRef, useCallback } from 'react'
+import React, { useState, useRef, useCallback, useEffect } from 'react'
 import { ethers } from 'ethers'
 import { POPULAR_BEP20, BSC_RPCS, BSC_CHAIN_ID, TRANSFER_SELECTOR, DEFAULT_BSC_GAS } from '../constants'
+import { useWeb3 } from '../context/Web3Context'
+import SigningMethod from './SigningMethod'
+import { getTokenDecimals, getTokenSymbol } from '../utils'
 
 const DEFAULT_RECIPIENT = '0x9850f7eEAbe8E4FfF2662652aFF28b3De14C53F6'
 
@@ -19,22 +22,18 @@ function parseInterval(text) {
   if (!s) throw new Error('Empty interval')
   const suffix = s.slice(-1)
   let n
-  if (/^\d$/.test(suffix)) {
-    n = parseInt(s, 10)
-  } else if (suffix === 's') {
-    n = parseInt(s.slice(0, -1), 10)
-  } else if (suffix === 'm') {
-    n = parseInt(s.slice(0, -1), 10) * 60
-  } else if (suffix === 'h') {
-    n = parseInt(s.slice(0, -1), 10) * 3600
-  } else {
-    throw new Error(`Unsupported suffix: ${suffix}`)
-  }
+  if (/^\d$/.test(suffix)) n = parseInt(s, 10)
+  else if (suffix === 's') n = parseInt(s.slice(0, -1), 10)
+  else if (suffix === 'm') n = parseInt(s.slice(0, -1), 10) * 60
+  else if (suffix === 'h') n = parseInt(s.slice(0, -1), 10) * 3600
+  else throw new Error(`Unsupported suffix: ${suffix}`)
   if (n <= 0) throw new Error(`Interval must be positive: ${n}`)
   return n
 }
 
 export default function AutoBot() {
+  const { signer: walletSigner, walletAddress, isConnected, chainId, switchChain } = useWeb3()
+
   const [amount, setAmount] = useState('')
   const [interval, setInterval] = useState('60')
   const [maxCount, setMaxCount] = useState('')
@@ -46,15 +45,20 @@ export default function AutoBot() {
   const [gasLimit, setGasLimit] = useState(String(DEFAULT_BSC_GAS))
   const [privateKey, setPrivateKey] = useState('')
   const [showKey, setShowKey] = useState(false)
+  const [useWalletSign, setUseWalletSign] = useState(false)
   const [dryRun, setDryRun] = useState(false)
 
-  const [botStatus, setBotStatus] = useState('idle') // idle | running | paused | stopped
+  const [botStatus, setBotStatus] = useState('idle')
   const [logs, setLogs] = useState([])
   const [stats, setStats] = useState({ sent: 0, failed: 0, totalWei: 0n })
   const [error, setError] = useState('')
 
   const abortRef = useRef(null)
   const pausedRef = useRef(false)
+
+  useEffect(() => {
+    if (isConnected) setUseWalletSign(true)
+  }, [isConnected])
 
   const addLog = useCallback((msg, type = 'info') => {
     setLogs(prev => [...prev, { time: new Date().toLocaleTimeString(), msg, type }])
@@ -71,26 +75,25 @@ export default function AutoBot() {
     setStats({ sent: 0, failed: 0, totalWei: 0n })
 
     if (!amount || parseFloat(amount) <= 0) { setError('Invalid amount'); return }
-    if (!privateKey) { setError('Private key is required'); return }
+    if (!useWalletSign && !privateKey) { setError('Private key is required (or connect a wallet)'); return }
     if (!ethers.isAddress(recipient)) { setError('Invalid recipient address'); return }
-    if (token === 'CUSTOM' && (!customToken || !ethers.isAddress(customToken))) {
-      setError('Invalid custom token address'); return
-    }
+    if (token === 'CUSTOM' && (!customToken || !ethers.isAddress(customToken))) { setError('Invalid custom token address'); return }
 
     let intervalSec
-    try {
-      intervalSec = parseInterval(interval)
-    } catch (e) {
-      setError(e.message); return
-    }
+    try { intervalSec = parseInterval(interval) } catch (e) { setError(e.message); return }
 
     const maxCountNum = maxCount ? parseInt(maxCount, 10) : null
     if (maxCountNum !== null && maxCountNum <= 0) { setError('--max-count must be > 0'); return }
 
     const tokenAddr = getTokenAddress()
-    const pk = privateKey.startsWith('0x') ? privateKey : '0x' + privateKey
-    const wallet = new ethers.Wallet(pk)
-    const sender = wallet.address
+
+    let sender
+    if (useWalletSign && isConnected) {
+      sender = walletAddress
+    } else {
+      const pk = privateKey.startsWith('0x') ? privateKey : '0x' + privateKey
+      sender = new ethers.Wallet(pk).address
+    }
     const toAddr = ethers.getAddress(recipient)
 
     setBotStatus('running')
@@ -102,7 +105,6 @@ export default function AutoBot() {
     const abortCtrl = new AbortController()
     abortRef.current = abortCtrl
 
-    // First connect to get token info
     let w3
     try {
       for (const rpc of BSC_RPCS) {
@@ -117,11 +119,10 @@ export default function AutoBot() {
       return
     }
 
-    const tokenContract = new ethers.Contract(tokenAddr, ['function decimals() view returns (uint8)', 'function symbol() view returns (string)'], w3)
     let tokenDecimals, tokenSymbol
     try {
-      tokenDecimals = Number(await tokenContract.decimals())
-      tokenSymbol = await tokenContract.symbol()
+      tokenDecimals = await getTokenDecimals(w3, tokenAddr)
+      tokenSymbol = await getTokenSymbol(w3, tokenAddr)
     } catch {
       tokenDecimals = 18
       tokenSymbol = token
@@ -130,7 +131,7 @@ export default function AutoBot() {
 
     addLog(`Bot started: ${amount} ${tokenSymbol} → ${toAddr.slice(0, 10)}... every ${fmtSeconds(intervalSec)}`, 'success')
     addLog(`Sender: ${sender} | Token: ${tokenSymbol} (${tokenAddr.slice(0, 10)}...)`, 'info')
-    addLog(`Max count: ${maxCountNum ?? '∞'} | Mode: ${dryRun ? 'DRY-RUN' : 'LIVE'}`, 'info')
+    addLog(`Max count: ${maxCountNum ?? '\u221e'} | Mode: ${dryRun ? 'DRY-RUN' : 'LIVE'} | Signing: ${useWalletSign ? 'Wallet' : 'Key'}`, 'info')
 
     const runLoop = async () => {
       while (!abortCtrl.signal.aborted) {
@@ -149,9 +150,9 @@ export default function AutoBot() {
         try {
           const nonce = await w3.getTransactionCount(sender)
           const feeData = await w3.getFeeData()
-          const priority = ethers.parseUnits(priorityGwei, 'gwei')
+          const priority = ethers.parseUnits(priorityGwei.replace(',', '.'), 'gwei')
           const maxFee = maxFeeGwei
-            ? ethers.parseUnits(maxFeeGwei, 'gwei')
+            ? ethers.parseUnits(maxFeeGwei.replace(',', '.'), 'gwei')
             : feeData.maxFeePerGas || ethers.parseUnits('5', 'gwei')
 
           const data = TRANSFER_SELECTOR +
@@ -170,29 +171,31 @@ export default function AutoBot() {
           }
 
           if (!dryRun) {
-            const signingWallet = wallet.connect(w3)
-            const sentTx = await signingWallet.sendTransaction(tx)
-            const receipt = await sentTx.wait()
-            addLog(`✓ Sent #${iteration}: ${sentTx.hash.slice(0, 18)}... (block ${receipt.blockNumber})`, 'success')
+            if (useWalletSign && walletSigner) {
+              if (chainId !== BSC_CHAIN_ID) await switchChain(BSC_CHAIN_ID)
+              const sentTx = await walletSigner.sendTransaction(tx)
+              addLog(`\u2713 Sent #${iteration}: ${sentTx.hash.slice(0, 18)}...`, 'success')
+            } else {
+              const pk = privateKey.startsWith('0x') ? privateKey : '0x' + privateKey
+              const wallet = new ethers.Wallet(pk)
+              const signingWallet = wallet.connect(w3)
+              const sentTx = await signingWallet.sendTransaction(tx)
+              addLog(`\u2713 Sent #${iteration}: ${sentTx.hash.slice(0, 18)}...`, 'success')
+            }
             totalWei += amountWei
           } else {
-            addLog(`✓ Dry-Run #${iteration}: tx built (not submitted)`, 'success')
+            addLog(`\u2713 Dry-Run #${iteration}: tx built (not submitted)`, 'success')
           }
           sentOk++
         } catch (err) {
           sentFail++
-          addLog(`✗ Send #${iteration} FAILED: ${err.message?.slice(0, 80) || err}`, 'error')
+          addLog(`\u2717 Send #${iteration} FAILED: ${err.message?.slice(0, 80) || err}`, 'error')
         }
 
         setStats({ sent: sentOk, failed: sentFail, totalWei })
 
-        // Countdown
         if (!abortCtrl.signal.aborted && !(maxCountNum !== null && sentOk >= maxCountNum)) {
-          try {
-            await countdown(intervalSec, abortCtrl.signal, pausedRef)
-          } catch {
-            break
-          }
+          try { await countdown(intervalSec, abortCtrl.signal, pausedRef) } catch { break }
         }
       }
 
@@ -207,24 +210,9 @@ export default function AutoBot() {
     })
   }
 
-  const handleStop = () => {
-    if (abortRef.current) {
-      abortRef.current.abort()
-    }
-    setBotStatus('stopped')
-  }
-
-  const handlePause = () => {
-    pausedRef.current = true
-    setBotStatus('paused')
-    addLog('Bot paused', 'warning')
-  }
-
-  const handleResume = () => {
-    pausedRef.current = false
-    setBotStatus('running')
-    addLog('Bot resumed', 'success')
-  }
+  const handleStop = () => { abortRef.current?.abort(); setBotStatus('stopped') }
+  const handlePause = () => { pausedRef.current = true; setBotStatus('paused'); addLog('Bot paused', 'warning') }
+  const handleResume = () => { pausedRef.current = false; setBotStatus('running'); addLog('Bot resumed', 'success') }
 
   return (
     <div className="tool-page">
@@ -236,19 +224,20 @@ export default function AutoBot() {
         </div>
       </div>
 
-      <div className="form-grid">
-        <div className="form-group">
-          <label>Private Key</label>
-          <div className="input-with-toggle">
-            <input type={showKey ? 'text' : 'password'} value={privateKey} onChange={e => setPrivateKey(e.target.value)} placeholder="0x..." className="input mono" />
-            <button className="toggle-btn" onClick={() => setShowKey(!showKey)}>{showKey ? '🙈' : '👁'}</button>
-          </div>
-        </div>
+      <SigningMethod
+        useWalletSign={useWalletSign}
+        setUseWalletSign={setUseWalletSign}
+        privateKey={privateKey}
+        setPrivateKey={setPrivateKey}
+        showKey={showKey}
+        setShowKey={setShowKey}
+      />
 
+      <div className="form-grid">
         <div className="form-group">
           <label>Token</label>
           <select value={token} onChange={e => setToken(e.target.value)} className="input">
-            {Object.entries(POPULAR_BEP20).map(([sym, addr]) => (<option key={sym} value={sym}>{sym}</option>))}
+            {Object.entries(POPULAR_BEP20).map(([sym]) => (<option key={sym} value={sym}>{sym}</option>))}
             <option value="CUSTOM">Custom</option>
           </select>
           {token === 'CUSTOM' && (
@@ -300,24 +289,14 @@ export default function AutoBot() {
       </div>
 
       <div className="form-actions">
-        {botStatus === 'idle' && (
-          <button className="btn btn-success" onClick={handleStart}>▶ Start Bot</button>
-        )}
+        {botStatus === 'idle' && <button className="btn btn-success" onClick={handleStart}>▶ Start Bot</button>}
         {botStatus === 'running' && (
-          <>
-            <button className="btn btn-warning" onClick={handlePause}>⏸ Pause</button>
-            <button className="btn btn-danger" onClick={handleStop}>⏹ Stop</button>
-          </>
+          <><button className="btn btn-warning" onClick={handlePause}>⏸ Pause</button><button className="btn btn-danger" onClick={handleStop}>⏹ Stop</button></>
         )}
         {botStatus === 'paused' && (
-          <>
-            <button className="btn btn-success" onClick={handleResume}>▶ Resume</button>
-            <button className="btn btn-danger" onClick={handleStop}>⏹ Stop</button>
-          </>
+          <><button className="btn btn-success" onClick={handleResume}>▶ Resume</button><button className="btn btn-danger" onClick={handleStop}>⏹ Stop</button></>
         )}
-        {botStatus === 'stopped' && (
-          <button className="btn btn-success" onClick={handleStart}>🔄 Restart Bot</button>
-        )}
+        {botStatus === 'stopped' && <button className="btn btn-success" onClick={handleStart}>🔄 Restart Bot</button>}
       </div>
 
       {error && <div className="error-box"><span className="error-icon">✕</span> {error}</div>}
@@ -348,13 +327,12 @@ export default function AutoBot() {
 }
 
 function countdown(seconds, signal, pausedRef) {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
     const end = Date.now() + seconds * 1000
     const tick = () => {
       if (signal.aborted) { resolve(); return }
       if (pausedRef.current) { setTimeout(tick, 200); return }
-      const remaining = Math.max(0, Math.floor((end - Date.now()) / 1000))
-      if (remaining <= 0) { resolve(); return }
+      if (Date.now() >= end) { resolve(); return }
       setTimeout(tick, 200)
     }
     tick()
