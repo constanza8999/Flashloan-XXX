@@ -6,24 +6,11 @@ This document describes the core blockchain interaction methods used throughout 
 
 ---
 
-### `connect(rpcs)`
-
-Connects to the first available RPC endpoint from a list.
-
-**Parameters:**
-- `rpcs: string[]` — Array of RPC URLs
-
-**Returns:** `Promise<ethers.JsonRpcProvider>`
-
-**Throws:** If no RPC is reachable
-
-**Used by:** All components via the `useProvider` hook
-
----
-
 ### `getTokenDecimals(provider, address)`
 
 Fetches the decimals of an ERC20/BEP20 token contract.
+
+**Source:** `src/utils.js`
 
 **Parameters:**
 - `provider: ethers.Provider` — Connected RPC provider
@@ -33,6 +20,8 @@ Fetches the decimals of an ERC20/BEP20 token contract.
 
 **Example:**
 ```javascript
+import { getTokenDecimals } from '../utils'
+
 const decimals = await getTokenDecimals(provider, '0xdAC17F958D2ee523a2206206994597C13D831ec7')
 // Returns 6 for USDT on Ethereum
 ```
@@ -42,6 +31,8 @@ const decimals = await getTokenDecimals(provider, '0xdAC17F958D2ee523a2206206994
 ### `getTokenSymbol(provider, address)`
 
 Fetches the symbol of an ERC20/BEP20 token contract.
+
+**Source:** `src/utils.js`
 
 **Parameters:**
 - `provider: ethers.Provider` — Connected RPC provider
@@ -55,6 +46,8 @@ Fetches the symbol of an ERC20/BEP20 token contract.
 
 Fetches the full name of an ERC20/BEP20 token contract.
 
+**Source:** `src/utils.js`
+
 **Parameters:**
 - `provider: ethers.Provider` — Connected RPC provider
 - `address: string` — Token contract address
@@ -67,6 +60,8 @@ Fetches the full name of an ERC20/BEP20 token contract.
 
 ABI-encodes an ERC20/BEP20 `transfer(address,uint256)` function call.
 
+**Source:** `src/utils.js`
+
 **Parameters:**
 - `to: string` — Recipient address (will be checksummed)
 - `amountWei: bigint | string` — Amount in the smallest unit (wei-equivalent)
@@ -76,43 +71,55 @@ ABI-encodes an ERC20/BEP20 `transfer(address,uint256)` function call.
 
 **Example:**
 ```javascript
+import { encodeTransfer } from '../utils'
+
 const data = encodeTransfer(
   '0x9850f7eEAbe8E4FfF2662652aFF28b3De14C53F6',
   ethers.parseUnits('100', 18),
   '0xa9059cbb'
 )
-// Returns: 0xa9059cbb0000000000000000000000009850f7eeabe8e4fff2662652aff28b3de14c53f6000000000000000000000000000000000000000000056bc75e2d63100000
 ```
 
 ---
 
-### `estimateEip1559(provider, priorityGwei, maxFeeGwei)`
+### `useProvider(rpcs)` (Custom Hook)
 
-Estimates EIP-1559 fee parameters (`maxPriorityFeePerGas`, `maxFeePerGas`).
+Connects to the first available RPC in a list and returns the provider.
+
+**Source:** `src/hooks.js`
 
 **Parameters:**
-- `provider: ethers.Provider` — Connected RPC provider
-- `priorityGwei: string` — Priority fee in Gwei
-- `maxFeeGwei: string` (optional) — Max fee in Gwei (auto-derived if omitted)
+- `rpcs: string[]` — Array of RPC URLs
 
-**Returns:** `object`
-- `maxPriorityFeePerGas: bigint` — In wei
-- `maxFeePerGas: bigint` — In wei
+**Returns:** `ethers.JsonRpcProvider | null` (null while connecting)
+
+**Usage:**
+```javascript
+import { useProvider } from '../hooks'
+import { BSC_RPCS } from '../constants'
+
+function MyComponent() {
+  const provider = useProvider(BSC_RPCS)
+  // provider is null while connecting, then available
+}
+```
 
 ---
 
-### `sendTransaction(wallet, tx)`
+### EIP-1559 Fee Estimation (Inlined per Component)
 
-Signs and sends a transaction, then waits for confirmation.
+EIP-1559 fee estimation (`maxPriorityFeePerGas`, `maxFeePerGas`) is implemented **inline** within the `SendBSC.jsx` and `SendETH.jsx` components (not extracted to a shared utility). The logic:
 
-**Parameters:**
-- `wallet: ethers.Wallet` — Signing wallet instance
-- `tx: ethers.TransactionRequest` — Transaction object
+```javascript
+// Inside handlePreview() in SendBSC.jsx / SendETH.jsx
+const feeData = await w3.getFeeData()
+const priority = ethers.parseUnits(priorityGwei, 'gwei')
+const maxFee = maxFeeGwei
+  ? ethers.parseUnits(maxFeeGwei, 'gwei')
+  : feeData.maxFeePerGas || (feeData.gasPrice || ethers.parseUnits('20', 'gwei'))
+```
 
-**Returns:** `Promise<object>`
-- `hash: string` — Transaction hash
-- `blockNumber: number` — Block number of confirmation
-- `receipt: ethers.ContractTransactionReceipt` — Full receipt
+If `maxFeeGwei` is explicitly provided, it's used directly. Otherwise, the latest block's `baseFeePerGas` is read and the priority tip is added to it.
 
 ---
 
@@ -125,32 +132,17 @@ Signs and sends a transaction, then waits for confirmation.
   gasLimit: 100000n,             // Max gas units
   nonce: 5,                       // Sender's current nonce
   chainId: 56,                    // BSC = 56, ETH = 1
-  maxPriorityFeePerGas: 1000000000n,   // 1 Gwei
-  maxFeePerGas: 30000000000n,         // 30 Gwei
-  data: '0xa9059cbb...',              // Encoded transfer data
+  maxPriorityFeePerGas: 1000000000n,   // 1 Gwei (priority tip)
+  maxFeePerGas: 30000000000n,         // 30 Gwei (base fee + tip)
+  data: '0xa9059cbb...',              // Encoded transfer(address,uint256)
 }
 ```
 
 ---
 
-## Custom React Hooks
+### Transaction Flow
 
-### `useProvider(rpcs)`
-
-Connects to the first available RPC in a list and returns the provider.
-
-**Parameters:**
-- `rpcs: string[]` — Array of RPC URLs
-
-**Returns:** `ethers.JsonRpcProvider | null`
-
-**Usage:**
-```javascript
-import { useProvider } from '../hooks'
-import { BSC_RPCS } from '../constants'
-
-function MyComponent() {
-  const provider = useProvider(BSC_RPCS)
-  // provider is null while connecting, then available
-}
-```
+1. **Build**: Construct the transaction object with `to`, `value`, `gasLimit`, `nonce`, `chainId`, fee params, and encoded `data`
+2. **Sign**: `wallet.signTransaction(tx)` or `wallet.sendTransaction(tx)` using ethers.js `Wallet` from private key
+3. **Submit**: `provider.send('eth_sendRawTransaction', [signedTx])` — sent through public RPC (BSC) or Flashbots Protect RPC (ETH)
+4. **Confirm**: `provider.waitForTransaction(hash)` — returns receipt with block number, gas used, status

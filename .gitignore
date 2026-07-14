@@ -20,6 +20,9 @@ build/
 *~
 .DS_Store
 
+# Vite cache
+.vite/
+
 # OS files
 Thumbs.db
 Desktop.ini

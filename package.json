@@ -1,8 +1,28 @@
 {
-  "name": "multi-chain-token-toolkit",
+  "name": "flashloan-xxx",
   "private": true,
   "version": "1.0.0",
   "type": "module",
+  "description": "Multi-chain token transfer toolkit — React SPA for BSC BEP20 & Eth ERC20 transfers via Flashbots Protect, with auto-bot, mempool watcher, and more",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/constanza8999/Flashloan-XXX.git"
+  },
+  "bugs": {
+    "url": "https://github.com/constanza8999/Flashloan-XXX/issues"
+  },
+  "homepage": "https://github.com/constanza8999/Flashloan-XXX",
+  "keywords": [
+    "blockchain",
+    "ethereum",
+    "bsc",
+    "usdt",
+    "flashbots",
+    "token-transfer",
+    "react",
+    "ethers"
+  ],
   "scripts": {
     "dev": "vite",
     "build": "vite build",
