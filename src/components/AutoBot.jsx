@@ -110,6 +110,7 @@ export default function AutoBot() {
       for (const rpc of BSC_RPCS) {
         const p = new ethers.JsonRpcProvider(rpc)
         await p.getNetwork()
+        await p.getBlockNumber()
         w3 = p
         break
       }

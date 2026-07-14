@@ -147,6 +147,7 @@ export default function BalanceChecker() {
         try {
           const p = new ethers.JsonRpcProvider(rpc)
           await p.getNetwork()
+          await p.getBlockNumber()
           if (!cancelled) { setBscProvider(p); break }
         } catch { /* try next */ }
       }
@@ -154,6 +155,7 @@ export default function BalanceChecker() {
         try {
           const p = new ethers.JsonRpcProvider(rpc)
           await p.getNetwork()
+          await p.getBlockNumber()
           if (!cancelled) { setEthProvider(p); break }
         } catch { /* try next */ }
       }
@@ -161,6 +163,7 @@ export default function BalanceChecker() {
         try {
           const p = new ethers.JsonRpcProvider(rpc)
           await p.getNetwork()
+          await p.getBlockNumber()
           if (!cancelled) { setPolygonProvider(p); break }
         } catch { /* try next */ }
       }
@@ -168,6 +171,7 @@ export default function BalanceChecker() {
         try {
           const p = new ethers.JsonRpcProvider(rpc)
           await p.getNetwork()
+          await p.getBlockNumber()
           if (!cancelled) { setArbitrumProvider(p); break }
         } catch { /* try next */ }
       }

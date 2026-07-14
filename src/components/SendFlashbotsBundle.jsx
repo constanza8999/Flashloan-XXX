@@ -1,15 +1,15 @@
 import React, { useState, useEffect } from 'react'
 import { ethers } from 'ethers'
-import { ETH_RPCS, POPULAR_ERC20, TRANSFER_SELECTOR, DEFAULT_ETH_GAS } from '../constants'
+import { ETH_RPCS, ETH_CHAIN_ID, POPULAR_ERC20, TRANSFER_SELECTOR, DEFAULT_ETH_GAS } from '../constants'
 import { useProvider } from '../hooks'
 import { getTokenDecimals, getTokenSymbol, encodeTransfer } from '../utils'
-import { signTxForBundle, submitBundle, getNextBlockNumber } from '../utils/flashbots'
+import { signTxForBundle, sendPrivateTx, getGasPrice } from '../utils/flashbots'
 import { useWeb3 } from '../context/Web3Context'
 import SigningMethod from './SigningMethod'
 import useTransactionHistory from '../hooks/useTransactionHistory'
 
 export default function SendFlashbotsBundle() {
-  const { signer: walletSigner, walletAddress, isConnected } = useWeb3()
+  const { signer: walletSigner, walletAddress, isConnected, chainId, switchChain } = useWeb3()
 
   const [to, setTo] = useState('')
   const [amount, setAmount] = useState('')
@@ -24,7 +24,6 @@ export default function SendFlashbotsBundle() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [derivedSender, setDerivedSender] = useState('')
-  const [targetBlock, setTargetBlock] = useState(null)
   const { addTx } = useTransactionHistory()
 
   const w3 = useProvider(ETH_RPCS)
@@ -72,16 +71,6 @@ export default function SendFlashbotsBundle() {
     setLoading(true)
 
     try {
-      // Get the signing wallet/signer
-      let signingWallet
-      if (useWalletSign && walletSigner) {
-        signingWallet = walletSigner
-      } else {
-        const pk = privateKey.startsWith('0x') ? privateKey : '0x' + privateKey
-        const wallet = new ethers.Wallet(pk)
-        signingWallet = wallet.connect(w3)
-      }
-
       const sender = getSender()
       if (!sender) { setError('Could not determine sender address'); return }
 
@@ -90,63 +79,106 @@ export default function SendFlashbotsBundle() {
       const decimals = await getTokenDecimals(w3, tokenAddr)
       const amountWei = ethers.parseUnits(amount, decimals)
       const tokenSymbol = token === 'CUSTOM' ? (await getTokenSymbol(w3, tokenAddr)) : token
-
-      // Build the tx with ZERO gas price (gasless)
-      const nonce = await w3.getTransactionCount(sender)
       const data = encodeTransfer(to, amountWei, TRANSFER_SELECTOR)
+      const nonce = await w3.getTransactionCount(sender)
+
+      // ───────────────────────────────────────────────────────
+      // WALLET MODE — Use eth_sendTransaction (MetaMask/WalletConnect)
+      // ───────────────────────────────────────────────────────
+      if (useWalletSign && walletSigner) {
+        // Switch to Ethereum mainnet if not already on it
+        if (chainId !== ETH_CHAIN_ID) {
+          await switchChain(ETH_CHAIN_ID)
+        }
+
+        const tx = {
+          to: ethers.getAddress(tokenAddr),
+          value: '0x0',
+          gasLimit: '0x' + BigInt(gasLimit).toString(16),
+          data,
+        }
+
+        // sendTransaction calls eth_sendTransaction which ALL wallets support
+        const txResponse = await walletSigner.sendTransaction(tx)
+        const receipt = await txResponse.wait()
+
+        const txHash = receipt?.hash || txResponse.hash
+
+        addTx({
+          chain: 'ETH (Wallet Send)',
+          status: 'success',
+          tokenSymbol,
+          tokenAddress: tokenAddr,
+          amount,
+          recipient: to,
+          sender,
+          txHash,
+          method: 'wallet',
+        })
+
+        setBundleResult({
+          txHash,
+          tokenSymbol,
+          amount,
+          sender,
+          recipient: to,
+          walletMode: true,
+        })
+        setLoading(false)
+        return
+      }
+
+      // ───────────────────────────────────────────────────────
+      // PRIVATE KEY MODE — Flashbots Protect (MEV-protected send)
+      // ───────────────────────────────────────────────────────
+      const pk = privateKey.startsWith('0x') ? privateKey : '0x' + privateKey
+      const signingWallet = new ethers.Wallet(pk).connect(w3)
+
+      // Get current gas price from the Flashbots Protect RPC
+      const gasPrice = await getGasPrice(w3)
 
       const tx = {
         to: ethers.getAddress(tokenAddr),
         value: 0n,
         gasLimit: BigInt(gasLimit),
         nonce,
-        chainId: 1, // Ethereum mainnet
-        gasPrice: 0n, // Gasless — zero gas price
+        chainId: 1,
+        gasPrice,
         data,
       }
 
-      // Sign the transaction
+      // Sign locally
       const signedTx = await signTxForBundle(signingWallet, tx)
 
-      // Get target block
-      const blockNumber = await getNextBlockNumber(w3)
-      setTargetBlock(blockNumber)
-
-      // Get auth signer (used for Flashbots relay authentication — uses signMessage, no private key needed)
-      const authSigner = useWalletSign && walletSigner
-        ? walletSigner
-        : new ethers.Wallet(privateKey.startsWith('0x') ? privateKey : '0x' + privateKey)
-
-      // Submit bundle
-      const result = await submitBundle([signedTx], blockNumber, authSigner)
+      // Submit to Flashbots Protect RPC (eth_sendRawTransaction)
+      const result = await sendPrivateTx(signedTx)
 
       if (result.ok) {
         addTx({
-          chain: 'ETH (Flashbots Bundle)',
-          status: 'broadcast',
+          chain: 'ETH (Flashbots Protect)',
+          status: 'success',
           tokenSymbol,
           tokenAddress: tokenAddr,
           amount,
           recipient: to,
           sender,
-          txHash: null, // No tx hash until included
-          method: useWalletSign ? 'wallet' : 'key',
+          txHash: result.txHash,
+          method: 'key',
         })
 
         setBundleResult({
-          bundleHash: result.bundleHash,
-          blockNumber,
-          txHash: ethers.keccak256(signedTx).slice(0, 66),
+          txHash: result.txHash,
           tokenSymbol,
           amount,
           sender,
           recipient: to,
+          walletMode: false,
         })
       } else {
-        setError(result.error || 'Bundle submission failed')
+        setError(result.error || 'Flashbots submission failed')
       }
     } catch (err) {
-      setError(err.message || 'Error submitting bundle')
+      setError(err.message || 'Error submitting transaction')
     }
     setLoading(false)
   }
@@ -156,18 +188,19 @@ export default function SendFlashbotsBundle() {
       <div className="tool-header">
         <span className="tool-icon">⚡</span>
         <div>
-          <h2>Gasless Flashbots Bundle</h2>
-          <p>Send tokens with zero gas price via Flashbots bundle relay</p>
+          <h2>Flashbots Private Send</h2>
+          <p>Send tokens with MEV protection via Flashbots Protect RPC</p>
         </div>
       </div>
 
-      <div className="error-box" style={{ borderColor: 'rgba(234, 179, 8, 0.3)', background: 'rgba(234, 179, 8, 0.05)' }}>
-        <span className="error-icon" style={{ background: 'rgba(234, 179, 8, 0.2)', color: '#fbbf24' }}>⚠</span>
+      <div className="error-box" style={{ borderColor: 'rgba(59, 130, 246, 0.3)', background: 'rgba(59, 130, 246, 0.05)' }}>
+        <span className="error-icon" style={{ background: 'rgba(59, 130, 246, 0.2)', color: '#60a5fa' }}>🛡</span>
         <div>
-          <strong style={{ color: '#fbbf24' }}>Experimental</strong>
+          <strong style={{ color: '#60a5fa' }}>How it works</strong>
           <p style={{ color: '#a3a3a3', marginTop: 4, fontSize: 12 }}>
-            Gasless bundles require the transaction to generate enough MEV to be profitable for validators.
-            Simple token transfers may not be included. The transaction is valid for one block only.
+            Your transaction is submitted directly to the <strong>Flashbots Protect RPC</strong>,
+            bypassing the public mempool. This prevents frontrunning, sandwich attacks, and other MEV exploits.
+            Standard gas fees apply. Your transaction never hits the public mempool.
           </p>
         </div>
       </div>
@@ -214,7 +247,10 @@ export default function SendFlashbotsBundle() {
 
       <div className="form-actions">
         <button className="btn btn-primary" onClick={handleSendBundle} disabled={loading || !w3}>
-          {loading ? '⏳ Submitting Bundle...' : '⚡ Submit Gasless Bundle'}
+          {loading
+            ? '⏳ Sending...'
+            : (useWalletSign && isConnected ? '🦊 Send via Wallet' : '🛡 Send via Flashbots Protect')
+          }
         </button>
       </div>
 
@@ -222,19 +258,11 @@ export default function SendFlashbotsBundle() {
 
       {bundleResult && (
         <div className="result-panel success">
-          <h3>✅ Bundle Submitted</h3>
+          <h3>✅ Transaction Sent via Flashbots</h3>
           <div className="result-grid">
             <div className="result-item">
-              <span className="ri-label">Bundle Hash</span>
-              <span className="ri-value mono">{bundleResult.bundleHash || 'N/A'}</span>
-            </div>
-            <div className="result-item">
-              <span className="ri-label">Target Block</span>
-              <span className="ri-value">#{bundleResult.blockNumber}</span>
-            </div>
-            <div className="result-item">
-              <span className="ri-label">TX Hash (preview)</span>
-              <span className="ri-value mono">{bundleResult.txHash?.slice(0, 34)}...</span>
+              <span className="ri-label">TX Hash</span>
+              <span className="ri-value mono">{bundleResult.txHash?.slice(0, 18)}...{bundleResult.txHash?.slice(-6)}</span>
             </div>
             <div className="result-item">
               <span className="ri-label">Amount</span>
@@ -250,7 +278,8 @@ export default function SendFlashbotsBundle() {
             </div>
           </div>
           <p style={{ marginTop: 12, fontSize: 12, color: 'var(--text-secondary)' }}>
-            The bundle was submitted for block #{bundleResult.blockNumber}. Check back after the block is mined to see if it was included.
+            View on{' '}
+            <a href={`https://etherscan.io/tx/${bundleResult.txHash}`} target="_blank" rel="noreferrer">Etherscan →</a>
           </p>
         </div>
       )}
