@@ -85,6 +85,24 @@ export default function useTransactionHistory() {
     return newTx.id
   }, [])
 
+  /**
+   * Update an existing transaction's status and optional fields.
+   * Used to mark broadcast transactions as confirmed once mined.
+   * @param {string} id - The tx ID returned by addTx
+   * @param {string} status - 'confirmed' | 'failed' | 'broadcast'
+   * @param {object} [extra] - Extra fields to merge (e.g. blockNumber, blockHash)
+   */
+  const updateTxStatus = useCallback((id, status, extra = {}) => {
+    setTxs(prev => {
+      const updated = prev.map(t => {
+        if (t.id !== id) return t
+        return { ...t, status, ...extra }
+      })
+      saveHistory(updated)
+      return updated
+    })
+  }, [])
+
   const clearHistory = useCallback(() => {
     setTxs([])
     saveHistory([])
@@ -102,6 +120,7 @@ export default function useTransactionHistory() {
     txs,
     addTx,
     addFailedTx,
+    updateTxStatus,
     clearHistory,
     removeTx,
     totalCount: txs.length,

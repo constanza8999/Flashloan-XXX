@@ -50,6 +50,32 @@ export const ARBITRUM_CHAIN_ID = 42161
 // ERC20/BEP20 transfer(address,uint256) selector
 export const TRANSFER_SELECTOR = '0xa9059cbb'
 
+// ─── DEX Router Addresses ────────────────────────────────────────────────
+export const UNISWAP_V3_ROUTER = '0xE592427A0AEce92De3Edee1F18E0157C05861564'
+export const UNISWAP_V2_ROUTER = '0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D'
+export const SUSHISWAP_ROUTER = '0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F'
+export const PANCAKESWAP_V3_ROUTER = '0x13f4EA83D0bd40E75C8222255bc855a974568Dd4'
+export const PANCAKESWAP_V2_ROUTER = '0x10ED43C718714eb63d5aA57B78B54704E256024E'
+export const AAVE_V3_POOL_PROVIDER_ETH = '0x2f39d218133AFaB8F2B819B1066c7E434Ad94E9e'
+export const AAVE_V3_POOL_PROVIDER_BSC = '0x0180085d4546857dfF58223c6c97C3A000A85501'
+export const ZEROX_EXCHANGE_PROXY = '0xdef1c0ded9bec7f1a1670819833240f027b25eff'
+
+// ─── Token Addresses ─────────────────────────────────────────────────────
+// Token contract addresses (some already defined above)
+export const ETH_WETH = '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2'
+export const ETH_USDC = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48'
+export const ETH_DAI = '0x6B175474E89094C44Da98b954EedeAC495271d0F'
+export const BSC_WBNB = '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c'
+export const BSC_USDC = '0x8ac76a51cc950d9922a3688cd78fa7a438cc87e7'
+export const BSC_BTCB = '0x7130d2A12B9BCbFAe4f2634d864A1Ee1Ce3Ead9c'
+export const BSC_WETH = '0x2170Ed0880ac9A755fd29B2688956BD959F933F8'
+
+// Native token constants
+export const NATIVE_TOKEN = 'NATIVE'
+export const NATIVE_ETH_DECIMALS = 18
+export const NATIVE_ETH_SYMBOL = 'ETH'
+export const NATIVE_SEND_GAS = 21000
+
 // Gas defaults
 export const DEFAULT_BSC_GAS = 100000
 export const DEFAULT_ETH_GAS = 100000

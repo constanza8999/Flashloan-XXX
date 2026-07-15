@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { ethers } from 'ethers'
-import { POPULAR_ERC20, ETH_RPCS, ETH_PROTECT_RPC, ETH_CHAIN_ID, TRANSFER_SELECTOR, DEFAULT_ETH_GAS } from '../constants'
+import { POPULAR_ERC20, ETH_RPCS, ETH_PROTECT_RPC, ETH_CHAIN_ID, TRANSFER_SELECTOR, DEFAULT_ETH_GAS, NATIVE_TOKEN, NATIVE_ETH_DECIMALS, NATIVE_ETH_SYMBOL, NATIVE_SEND_GAS } from '../constants'
 import { useProvider } from '../hooks'
 import { getTokenDecimals, getTokenSymbol, encodeTransfer } from '../utils'
 import { useWeb3 } from '../context/Web3Context'
@@ -18,6 +18,7 @@ export default function SendETH() {
   const [priorityGwei, setPriorityGwei] = useState('1.0')
   const [maxFeeGwei, setMaxFeeGwei] = useState('')
   const [gasLimit, setGasLimit] = useState(String(DEFAULT_ETH_GAS))
+  const isNative = token === NATIVE_TOKEN
   const [privateKey, setPrivateKey] = useState('')
   const [showKey, setShowKey] = useState(false)
   const [useWalletSign, setUseWalletSign] = useState(false)
@@ -28,7 +29,7 @@ export default function SendETH() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [derivedSender, setDerivedSender] = useState('')
-  const { addTx, addFailedTx } = useTransactionHistory()
+  const { addTx, addFailedTx, updateTxStatus } = useTransactionHistory()
   const { notifyTx } = useTelegram()
 
   const w3 = useProvider(ETH_RPCS)
@@ -49,6 +50,7 @@ export default function SendETH() {
   }, [privateKey])
 
   const getTokenAddress = () => {
+    if (isNative) return ''
     if (token === 'CUSTOM') return customToken.trim()
     return POPULAR_ERC20[token]
   }
@@ -65,16 +67,13 @@ export default function SendETH() {
 
     if (!to || !ethers.isAddress(to)) { setError('Invalid recipient address'); return }
     if (!amount || parseFloat(amount) <= 0) { setError('Invalid amount'); return }
-    if (!useWalletSign && !privateKey) { setError('Private key is required (or connect a wallet)'); return }
-    if (token === 'CUSTOM' && (!customToken || !ethers.isAddress(customToken))) {
+    if (!useWalletSign && !privateKey) { setError('Private key is required (or connect a wallet)'); return }      if (token === 'CUSTOM' && (!customToken || !ethers.isAddress(customToken))) {
       setError('Invalid custom token address'); return
     }
+    if (isNative && !to) { setError('Recipient address is required for native ETH send'); return }
     if (!w3) { setError('Not connected to any RPC'); return }
 
     try {
-      const tokenAddr = getTokenAddress()
-      const decimals = await getTokenDecimals(w3, tokenAddr)
-      const amountWei = ethers.parseUnits(amount, decimals)
       const sender = getSender()
       if (!sender) { setError('Could not determine sender address'); return }
 
@@ -85,20 +84,45 @@ export default function SendETH() {
         ? ethers.parseUnits(maxFeeGwei.replace(',', '.'), 'gwei')
         : feeData.maxFeePerGas || (feeData.gasPrice || ethers.parseUnits('20', 'gwei'))
 
-      const data = encodeTransfer(to, amountWei, TRANSFER_SELECTOR)
+      let tx, tokenSymbol, tokenAddr, decimals, amountWei
 
-      const tx = {
-        to: ethers.getAddress(tokenAddr),
-        value: 0n,
-        gasLimit: BigInt(gasLimit),
-        nonce,
-        chainId: ETH_CHAIN_ID,
-        maxPriorityFeePerGas: priority,
-        maxFeePerGas: maxFee,
-        data,
+      if (isNative) {
+        // Native ETH send — value holds the amount, no data
+        amountWei = ethers.parseUnits(amount, NATIVE_ETH_DECIMALS)
+        tokenSymbol = NATIVE_ETH_SYMBOL
+        tokenAddr = ''
+        decimals = NATIVE_ETH_DECIMALS
+
+        tx = {
+          to: ethers.getAddress(to),
+          value: amountWei,
+          gasLimit: BigInt(NATIVE_SEND_GAS),
+          nonce,
+          chainId: ETH_CHAIN_ID,
+          maxPriorityFeePerGas: priority,
+          maxFeePerGas: maxFee,
+          data: '0x',
+        }
+      } else {
+        // ERC20 token send — call transfer() on token contract
+        tokenAddr = getTokenAddress()
+        decimals = await getTokenDecimals(w3, tokenAddr)
+        amountWei = ethers.parseUnits(amount, decimals)
+        tokenSymbol = token === 'CUSTOM' ? (await getTokenSymbol(w3, tokenAddr)) : token
+
+        const data = encodeTransfer(to, amountWei, TRANSFER_SELECTOR)
+
+        tx = {
+          to: ethers.getAddress(tokenAddr),
+          value: 0n,
+          gasLimit: BigInt(gasLimit),
+          nonce,
+          chainId: ETH_CHAIN_ID,
+          maxPriorityFeePerGas: priority,
+          maxFeePerGas: maxFee,
+          data,
+        }
       }
-
-      const tokenSymbol = token === 'CUSTOM' ? (await getTokenSymbol(w3, tokenAddr)) : token
 
       setTxConfig({
         ...tx,
@@ -108,7 +132,7 @@ export default function SendETH() {
         decimals,
         amountWei: amountWei.toString(),
         sender,
-        gasLimit,
+        gasLimit: isNative ? String(NATIVE_SEND_GAS) : gasLimit,
         maxFeeGwei: ethers.formatUnits(maxFee, 'gwei'),
         priorityGwei: ethers.formatUnits(priority, 'gwei'),
         chain: 'ETH (Flashbots)',
@@ -154,7 +178,7 @@ export default function SendETH() {
         sentTx = await signingWallet.sendTransaction(tx)
       }
 
-      addTx({
+      const txId = addTx({
         chain: 'ETH (Flashbots)',
         status: 'broadcast',
         tokenSymbol: txConfig.tokenSymbol,
@@ -166,6 +190,10 @@ export default function SendETH() {
         explorerUrl: `https://protect.flashbots.net/tx/${sentTx.hash}`,
         method: txConfig.signingMethod,
       })
+      // Wait for next-block confirmation in background
+      sentTx.wait()
+        .then(receipt => updateTxStatus(txId, 'confirmed', { blockNumber: receipt.blockNumber }))
+        .catch(() => console.warn('TX confirmation failed for', sentTx.hash))
       // Send Telegram notification (fire-and-forget)
       notifyTx({
         chain: 'ETH (Flashbots)',
@@ -222,7 +250,9 @@ export default function SendETH() {
       <div className="form-grid">
         <div className="form-group">
           <label>Token</label>
-          <select value={token} onChange={e => setToken(e.target.value)} className="input">
+          <select value={token} onChange={e => { setToken(e.target.value); if (e.target.value === NATIVE_TOKEN) setGasLimit(String(NATIVE_SEND_GAS)) }} className="input">
+            <option value={NATIVE_TOKEN}>ETH (Native)</option>
+            <option disabled>──────────</option>
             {Object.entries(POPULAR_ERC20).map(([sym, addr]) => (
               <option key={sym} value={sym}>{sym} — {addr.slice(0, 8)}...</option>
             ))}

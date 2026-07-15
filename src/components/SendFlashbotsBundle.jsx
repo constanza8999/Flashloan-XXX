@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { ethers } from 'ethers'
-import { ETH_RPCS, ETH_CHAIN_ID, POPULAR_ERC20, TRANSFER_SELECTOR, DEFAULT_ETH_GAS } from '../constants'
+import { ETH_RPCS, ETH_CHAIN_ID, POPULAR_ERC20, TRANSFER_SELECTOR, DEFAULT_ETH_GAS, NATIVE_TOKEN, NATIVE_ETH_DECIMALS, NATIVE_ETH_SYMBOL, NATIVE_SEND_GAS } from '../constants'
 import { useProvider } from '../hooks'
 import { getTokenDecimals, getTokenSymbol, encodeTransfer } from '../utils'
 import { signTxForBundle, sendPrivateTx, getGasPrice } from '../utils/flashbots'
@@ -16,6 +16,7 @@ export default function SendFlashbotsBundle() {
   const [token, setToken] = useState('USDT')
   const [customToken, setCustomToken] = useState('')
   const [gasLimit, setGasLimit] = useState(String(DEFAULT_ETH_GAS))
+  const isNative = token === NATIVE_TOKEN
   const [privateKey, setPrivateKey] = useState('')
   const [showKey, setShowKey] = useState(false)
   const [useWalletSign, setUseWalletSign] = useState(false)
@@ -46,6 +47,7 @@ export default function SendFlashbotsBundle() {
   }, [privateKey])
 
   const getTokenAddress = () => {
+    if (isNative) return ''
     if (token === 'CUSTOM') return customToken.trim()
     return POPULAR_ERC20[token]
   }
@@ -66,6 +68,7 @@ export default function SendFlashbotsBundle() {
     if (token === 'CUSTOM' && (!customToken || !ethers.isAddress(customToken))) {
       setError('Invalid custom token address'); return
     }
+    if (isNative && !to) { setError('Recipient address is required for native ETH send'); return }
     if (!w3) { setError('Not connected to any RPC'); return }
 
     setLoading(true)
@@ -75,12 +78,25 @@ export default function SendFlashbotsBundle() {
       if (!sender) { setError('Could not determine sender address'); return }
 
       // Get token info
-      const tokenAddr = getTokenAddress()
-      const decimals = await getTokenDecimals(w3, tokenAddr)
-      const amountWei = ethers.parseUnits(amount, decimals)
-      const tokenSymbol = token === 'CUSTOM' ? (await getTokenSymbol(w3, tokenAddr)) : token
-      const data = encodeTransfer(to, amountWei, TRANSFER_SELECTOR)
       const nonce = await w3.getTransactionCount(sender)
+
+      let tokenAddr, decimals, amountWei, tokenSymbol, txData
+
+      if (isNative) {
+        // Native ETH send
+        tokenAddr = ''
+        decimals = NATIVE_ETH_DECIMALS
+        amountWei = ethers.parseUnits(amount, NATIVE_ETH_DECIMALS)
+        tokenSymbol = NATIVE_ETH_SYMBOL
+        txData = '0x'
+      } else {
+        // ERC20 token send
+        tokenAddr = getTokenAddress()
+        decimals = await getTokenDecimals(w3, tokenAddr)
+        amountWei = ethers.parseUnits(amount, decimals)
+        tokenSymbol = token === 'CUSTOM' ? (await getTokenSymbol(w3, tokenAddr)) : token
+        txData = encodeTransfer(to, amountWei, TRANSFER_SELECTOR)
+      }
 
       // ───────────────────────────────────────────────────────
       // WALLET MODE — Use eth_sendTransaction (MetaMask/WalletConnect)
@@ -92,10 +108,10 @@ export default function SendFlashbotsBundle() {
         }
 
         const tx = {
-          to: ethers.getAddress(tokenAddr),
-          value: '0x0',
-          gasLimit: '0x' + BigInt(gasLimit).toString(16),
-          data,
+          to: ethers.getAddress(isNative ? to : tokenAddr),
+          value: isNative ? '0x' + amountWei.toString(16) : '0x0',
+          gasLimit: '0x' + BigInt(isNative ? NATIVE_SEND_GAS : gasLimit).toString(16),
+          data: txData,
         }
 
         // sendTransaction calls eth_sendTransaction which ALL wallets support
@@ -138,13 +154,13 @@ export default function SendFlashbotsBundle() {
       const gasPrice = await getGasPrice(w3)
 
       const tx = {
-        to: ethers.getAddress(tokenAddr),
-        value: 0n,
-        gasLimit: BigInt(gasLimit),
+        to: ethers.getAddress(isNative ? to : tokenAddr),
+        value: isNative ? amountWei : 0n,
+        gasLimit: BigInt(isNative ? NATIVE_SEND_GAS : gasLimit),
         nonce,
         chainId: 1,
         gasPrice,
-        data,
+        data: txData,
       }
 
       // Sign locally
@@ -218,7 +234,9 @@ export default function SendFlashbotsBundle() {
       <div className="form-grid">
         <div className="form-group">
           <label>Token</label>
-          <select value={token} onChange={e => setToken(e.target.value)} className="input">
+          <select value={token} onChange={e => { setToken(e.target.value); if (e.target.value === NATIVE_TOKEN) setGasLimit(String(NATIVE_SEND_GAS)) }} className="input">
+            <option value={NATIVE_TOKEN}>ETH (Native)</option>
+            <option disabled>──────────</option>
             {Object.entries(POPULAR_ERC20).map(([sym, addr]) => (
               <option key={sym} value={sym}>{sym} — {addr.slice(0, 8)}...</option>
             ))}

@@ -30,24 +30,27 @@ export default function WalletConnectButton() {
   }, [])
 
   const formatAddress = (addr) => {
-    if (!addr) return ''
-    return `${addr.slice(0, 6)}...${addr.slice(-4)}`
+    if (!addr) return '';
+    return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
   }
 
-  const walletIcon = walletType === 'metamask' ? '🦊' : walletType === 'walletconnect' ? '🔗' : '👛'
+    const walletIcon = walletType === 'metamask' ? '🦊' : walletType === 'walletconnect' ? '🔗' : '👛'
 
-  if (isConnected && walletAddress) {
-    return (
-      <div className="wallet-dropdown" ref={dropdownRef}>
-        <button
-          className={`wallet-badge connected ${chainId === 56 ? 'bsc' : 'eth'}`}
-          onClick={() => setShowDropdown(!showDropdown)}
-        >
-          <span className="wallet-icon">{walletIcon}</span>
-          <span className="wallet-addr">{formatAddress(walletAddress)}</span>
-          <span className="wallet-chain-badge">{chainName}</span>
-          <span className={`wallet-dot ${showDropdown ? 'open' : ''}`}>▾</span>
-        </button>
+    const chainClass = chainId === 1 ? 'eth' : chainId === 56 ? 'bsc' : chainId === 137 ? 'polygon' : chainId === 42161 ? 'arbitrum' : 'unknown'
+
+    if (isConnected && walletAddress) {
+      return (
+        <div className="wallet-dropdown" ref={dropdownRef}>
+          <button
+            className={`wallet-badge connected ${chainClass}`}
+            onClick={() => setShowDropdown(!showDropdown)}
+          >
+            <span className={`chain-indicator-dot ${chainClass}`} />
+            <span className="wallet-icon">{walletIcon}</span>
+            <span className="wallet-addr">{formatAddress(walletAddress)}</span>
+            <span className="wallet-chain-badge">{chainName}</span>
+            <span className={`wallet-dot ${showDropdown ? 'open' : ''}`}>▾</span>
+          </button>
 
         {showDropdown && (
           <div className="wallet-dropdown-menu">

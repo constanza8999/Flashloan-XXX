@@ -3,6 +3,27 @@ import { useWeb3 } from '../context/Web3Context'
 
 const QUICK_ACTIONS = [
   {
+    id: 'arbitrage',
+    title: 'Arbitrage Dashboard',
+    desc: 'Real-time DEX price monitoring and cross-DEX arbitrage opportunity detection',
+    icon: '📊',
+    color: '#3B82F6',
+  },
+  {
+    id: 'mev-bot',
+    title: 'MEV Strategy Bot',
+    desc: 'Advanced MEV protection via Flashbots, bundle building, and private mempools',
+    icon: '🤖',
+    color: '#8B5CF6',
+  },
+  {
+    id: 'withdraw',
+    title: 'Profit Withdraw',
+    desc: 'Withdraw arbitrage profits and sweep tokens from FlashArbitrage contracts',
+    icon: '💸',
+    color: '#10B981',
+  },
+  {
     id: 'send-bsc',
     title: 'Send BSC Tokens',
     desc: 'Transfer BEP20 tokens on Binance Smart Chain with EIP-1559 fee estimation',
@@ -64,6 +85,48 @@ const QUICK_ACTIONS = [
     desc: 'Quick hardcoded USDT send with Telegram notification (legacy)',
     icon: '⚙',
     color: '#EC4899',
+  },
+  {
+    id: 'gasless-relay',
+    title: 'Gasless Relay',
+    desc: 'EIP-2771 meta-transactions with distributed relay node network — users sign, relayers pay gas',
+    icon: '⛽',
+    color: '#F97316',
+  },
+  {
+    id: 'propagation',
+    title: 'Propagation Network',
+    desc: 'Private transaction broadcast to Flashbots, BloXroute, Eden, and custom RPC endpoints',
+    icon: '📡',
+    color: '#06B6D4',
+  },
+  {
+    id: 'cross-chain',
+    title: 'Cross-Chain Bridge',
+    desc: 'Bridge tokens between chains via Stargate (LayerZero) and Across Protocol',
+    icon: '🌉',
+    color: '#22C55E',
+  },
+  {
+    id: 'p2p-network',
+    title: 'P2P Network',
+    desc: 'Peer-to-peer transaction propagation with automatic discovery and geographic routing',
+    icon: '🌐',
+    color: '#A855F7',
+  },
+  {
+    id: 'relay-nodes',
+    title: 'Relay Nodes',
+    desc: 'Master-slave relay node manager with health checks, failover, and balance sync',
+    icon: '🗼',
+    color: '#EC4899',
+  },
+  {
+    id: 'predictor',
+    title: 'ML Price Predictor',
+    desc: 'LSTM neural network for token price prediction with historical data and confidence scoring',
+    icon: '🧠',
+    color: '#8B5CF6',
   },
 ]
 

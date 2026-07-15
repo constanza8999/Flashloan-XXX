@@ -28,7 +28,7 @@ export default function SendPolygon() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [derivedSender, setDerivedSender] = useState('')
-  const { addTx, addFailedTx } = useTransactionHistory()
+  const { addTx, addFailedTx, updateTxStatus } = useTransactionHistory()
   const { notifyTx } = useTelegram()
 
   const w3 = useProvider(POLYGON_RPCS)
@@ -150,7 +150,7 @@ export default function SendPolygon() {
         const signingWallet = wallet.connect(w3)
         sentTx = await signingWallet.sendTransaction(tx)
       }
-      addTx({
+      const txId = addTx({
         chain: 'Polygon',
         status: 'broadcast',
         tokenSymbol: txConfig.tokenSymbol,
@@ -162,6 +162,10 @@ export default function SendPolygon() {
         explorerUrl: `https://polygonscan.com/tx/${sentTx.hash}`,
         method: txConfig.signingMethod,
       })
+      // Wait for next-block confirmation in background
+      sentTx.wait()
+        .then(receipt => updateTxStatus(txId, 'confirmed', { blockNumber: receipt.blockNumber }))
+        .catch(() => console.warn('TX confirmation failed for', sentTx.hash))
       notifyTx({
         chain: 'Polygon',
         tokenSymbol: txConfig.tokenSymbol,

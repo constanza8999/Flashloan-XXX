@@ -1,5 +1,14 @@
 # Multi-Chain Token Toolkit
 
+<div align="center">
+
+[![Deploy to GitHub Pages](https://github.com/constanza8999/Flashloan-XXX/actions/workflows/deploy.yml/badge.svg)](https://github.com/constanza8999/Flashloan-XXX/actions/workflows/deploy.yml)
+[![Live Site](https://img.shields.io/badge/%F0%9F%8C%90-Live%20Site-3b82f6?style=flat-square)](https://constanza8999.github.io/Flashloan-XXX/)
+[![React](https://img.shields.io/badge/React-18-61dafb?style=flat-square&logo=react)](https://react.dev)
+[![ethers.js](https://img.shields.io/badge/ethers.js-v6-2536c7?style=flat-square)](https://docs.ethers.org)
+
+</div>
+
 A comprehensive single-page React application for multi-chain token transfers, combining all the functionality from the original Python CLI tools into a beautiful, responsive web interface.
 
 ## Features

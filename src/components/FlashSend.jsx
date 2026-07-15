@@ -26,7 +26,7 @@ export default function FlashSend() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [derivedSender, setDerivedSender] = useState('')
-  const { addTx, addFailedTx } = useTransactionHistory()
+  const { addTx, addFailedTx, updateTxStatus } = useTransactionHistory()
   const { enabled: tgEnabled, isConfigured: tgConfigured, notifyTx } = useTelegram()
 
   useEffect(() => {
@@ -91,7 +91,7 @@ export default function FlashSend() {
 
       const sentTx = await signingWallet.sendTransaction(tx)
 
-      addTx({
+      const txId = addTx({
         chain: 'ETH',
         status: 'broadcast',
         tokenSymbol: 'USDT',
@@ -103,6 +103,10 @@ export default function FlashSend() {
         explorerUrl: `https://etherscan.io/tx/${sentTx.hash}`,
         method: useWalletSign ? 'wallet' : 'key',
       })
+      // Wait for next-block confirmation in background
+      sentTx.wait()
+        .then(receipt => updateTxStatus(txId, 'confirmed', { blockNumber: receipt.blockNumber }))
+        .catch(() => console.warn('TX confirmation failed for', sentTx.hash))
 
       // Send Telegram notification (fire-and-forget) using global config
       notifyTx({

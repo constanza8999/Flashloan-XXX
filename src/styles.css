@@ -1,8 +1,9 @@
 /* ============================================================
-   Multi-Chain Token Toolkit — Dark Theme Styles
+   Multi-Chain Token Toolkit — Theme Variables
    ============================================================ */
 
 :root {
+  /* ─── Dark theme (default) ─── */
   --bg-primary: #0a0e1a;
   --bg-secondary: #111827;
   --bg-card: #1a1f2e;
@@ -49,6 +50,59 @@
 
   --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --font-mono: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+}
+
+/* ─── Light theme ─── */
+body.light-theme {
+  --bg-primary: #f8fafc;
+  --bg-secondary: #f1f5f9;
+  --bg-card: #ffffff;
+  --bg-card-hover: #f8fafc;
+  --bg-input: #ffffff;
+  --bg-nav: #e2e8f0;
+  --bg-header: #ffffff;
+
+  --border: #e2e8f0;
+  --border-light: #cbd5e1;
+  --border-focus: #3b82f6;
+
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --text-dim: #94a3b8;
+  --text-accent: #2563eb;
+
+  /* accent colors stay the same (work on both backgrounds) */
+  --accent-blue: #3b82f6;
+  --accent-blue-hover: #2563eb;
+  --accent-green: #16a34a;
+  --accent-green-dim: #dcfce7;
+  --accent-red: #dc2626;
+  --accent-red-dim: #fee2e2;
+  --accent-yellow: #ca8a04;
+  --accent-yellow-dim: #fef9c3;
+  --accent-purple: #9333ea;
+  --accent-orange: #ea580c;
+  --accent-cyan: #0891b2;
+  --accent-pink: #db2777;
+
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.12);
+  --shadow-glow: 0 0 20px rgba(59, 130, 246, 0.1);
+}
+
+/* CSS transition for smooth theme switching */
+/* Only transition the body itself — CSS custom properties cascade to all children */
+body {
+  transition: background-color var(--transition-slow),
+              color var(--transition-slow),
+              border-color var(--transition-slow);
+}
+
+/* Disable transitions on page load to avoid flash */
+body.preload,
+body.preload * {
+  transition: none !important;
 }
 
 /* ============================================================
@@ -1254,6 +1308,68 @@ select.input option {
 
 .wallet-btn-icon { font-size: 16px; }
 
+/* ============================================================
+   Theme Toggle Button
+   ============================================================ */
+
+.theme-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  color: var(--text-secondary);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: var(--transition);
+  white-space: nowrap;
+}
+
+.theme-toggle-btn:hover {
+  border-color: var(--border-focus);
+  color: var(--text-primary);
+  box-shadow: 0 0 12px rgba(59, 130, 246, 0.1);
+}
+
+.theme-toggle-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  line-height: 1;
+  transition: transform 0.3s ease;
+}
+
+.theme-toggle-btn:hover .theme-toggle-icon {
+  animation: spin-theme-icon 0.5s ease;
+}
+
+@keyframes spin-theme-icon {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.theme-toggle-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+@media (max-width: 480px) {
+  .theme-toggle-label {
+    display: none;
+  }
+
+  .theme-toggle-btn {
+    padding: 8px 10px;
+  }
+}
+
 .wallet-error-tooltip {
   display: none;
   position: absolute;
@@ -1302,9 +1418,43 @@ select.input option {
   color: var(--accent-blue);
 }
 
+.wallet-badge.connected.polygon {
+  background: rgba(168, 85, 247, 0.1);
+  border-color: rgba(168, 85, 247, 0.3);
+  color: var(--accent-purple);
+}
+
+.wallet-badge.connected.arbitrum {
+  background: rgba(6, 182, 212, 0.1);
+  border-color: rgba(6, 182, 212, 0.3);
+  color: var(--accent-cyan);
+}
+
+.wallet-badge.connected.unknown {
+  background: rgba(148, 163, 184, 0.1);
+  border-color: rgba(148, 163, 184, 0.3);
+  color: var(--text-secondary);
+}
+
 .wallet-badge:hover {
   filter: brightness(1.2);
 }
+
+/* Chain indicator dot (colored circle before wallet icon) */
+.chain-indicator-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  animation: pulse-dot 2s ease-in-out infinite;
+}
+
+.chain-indicator-dot.eth { background: #3b82f6; box-shadow: 0 0 6px rgba(59, 130, 246, 0.6); }
+.chain-indicator-dot.bsc { background: #22c55e; box-shadow: 0 0 6px rgba(34, 197, 94, 0.6); }
+.chain-indicator-dot.polygon { background: #a855f7; box-shadow: 0 0 6px rgba(168, 85, 247, 0.6); }
+.chain-indicator-dot.arbitrum { background: #06b6d4; box-shadow: 0 0 6px rgba(6, 182, 212, 0.6); }
+.chain-indicator-dot.unknown { background: #64748b; box-shadow: 0 0 6px rgba(100, 116, 139, 0.6); }
 
 .wallet-icon { font-size: 14px; }
 .wallet-addr { font-family: var(--font-mono); font-size: 11px; }
@@ -1617,6 +1767,140 @@ select.input option {
   font-size: 11px;
   color: var(--text-dim);
   text-align: center;
+}
+
+/* ============================================================
+   Profit Withdraw
+   ============================================================ */
+
+.pw-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.pw-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pw-field.full {
+  grid-column: 1 / -1;
+}
+
+.pw-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.pw-input-row {
+  display: flex;
+  gap: 6px;
+}
+
+.pw-input-row .input {
+  flex: 1;
+}
+
+.pw-max-btn {
+  padding: 10px 14px;
+  background: var(--accent-blue);
+  border: none;
+  border-radius: var(--radius-sm);
+  color: white;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: opacity 0.2s;
+  letter-spacing: 0.05em;
+}
+
+.pw-max-btn:hover {
+  opacity: 0.85;
+}
+
+.pw-balance-placeholder {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  min-height: 42px;
+}
+
+.pw-balance-value {
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent-green);
+}
+
+.pw-balance-sub {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-secondary);
+}
+
+.pw-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 16px;
+}
+
+.pw-balances-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.pw-chain-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 16px;
+  transition: var(--transition);
+}
+
+.pw-chain-card:hover {
+  border-color: var(--border-light);
+}
+
+.pw-chain-header {
+  font-weight: 600;
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+
+.pw-native-bal {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--accent-green);
+  margin-bottom: 6px;
+}
+
+.pw-token-bal {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin: 2px 0;
+}
+
+.pw-contract-addr {
+  font-size: 10px;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  margin-top: 6px;
+}
+
+.pw-error {
+  color: var(--accent-red);
+  font-size: 12px;
 }
 
 /* ============================================================
@@ -2622,6 +2906,424 @@ select.input option {
 .tg-status-icon {
   font-size: 16px;
   flex-shrink: 0;
+}
+
+/* ============================================================
+   Relay Node Grid (used by GaslessRelay & RelayNodes)
+   ============================================================ */
+
+.relay-node-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+}
+
+.relay-node-card {
+  background: var(--bg-card-hover);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 14px;
+  transition: var(--transition);
+}
+
+.relay-node-card:hover {
+  border-color: var(--border-light);
+  transform: translateY(-1px);
+}
+
+.relay-node-card.offline {
+  opacity: 0.6;
+}
+
+.relay-node-card.degraded {
+  border-color: rgba(234, 179, 8, 0.3);
+}
+
+.relay-node-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.relay-node-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.relay-node-dot.active {
+  background: var(--accent-green);
+  box-shadow: 0 0 6px rgba(34, 197, 94, 0.5);
+}
+
+.relay-node-dot.degraded {
+  background: var(--accent-yellow);
+  box-shadow: 0 0 6px rgba(234, 179, 8, 0.5);
+}
+
+.relay-node-dot.offline {
+  background: var(--accent-red);
+  box-shadow: 0 0 6px rgba(239, 68, 68, 0.3);
+}
+
+.relay-node-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.relay-node-region {
+  font-size: 10px;
+  padding: 2px 6px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: var(--radius-full);
+  color: var(--text-dim);
+  margin-left: auto;
+}
+
+.relay-node-addr {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+}
+
+.relay-node-stats {
+  display: flex;
+  gap: 10px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  flex-wrap: wrap;
+}
+
+.relay-node-stats span {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.relay-node-status-badge {
+  display: inline-flex;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.relay-node-status-badge.active {
+  background: rgba(34, 197, 94, 0.12);
+  color: var(--accent-green);
+}
+
+.relay-node-status-badge.degraded {
+  background: rgba(234, 179, 8, 0.12);
+  color: var(--accent-yellow);
+}
+
+.relay-node-status-badge.offline {
+  background: rgba(239, 68, 68, 0.12);
+  color: var(--accent-red);
+}
+
+.relay-node-type.master {
+  font-size: 16px;
+}
+
+.relay-node-type.slave {
+  font-size: 14px;
+}
+
+/* ============================================================
+   Endpoint List (Propagation Network)
+   ============================================================ */
+
+.endpoint-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.endpoint-row {
+  display: grid;
+  grid-template-columns: 40px 1fr auto auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 14px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  transition: var(--transition);
+}
+
+.endpoint-row:hover {
+  border-color: var(--border-light);
+  background: var(--bg-card);
+}
+
+.endpoint-row.active {
+  border-left: 3px solid var(--accent-green);
+}
+
+.endpoint-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.endpoint-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.endpoint-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.endpoint-priority {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  align-items: center;
+}
+
+.endpoint-badge {
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.endpoint-badge.online {
+  color: var(--accent-green);
+}
+
+.endpoint-badge.offline {
+  color: var(--text-dim);
+}
+
+/* ============================================================
+   Peer Grid (P2P Network)
+   ============================================================ */
+
+.peer-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 10px;
+}
+
+.peer-card {
+  background: var(--bg-card-hover);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 14px;
+  transition: var(--transition);
+}
+
+.peer-card:hover {
+  border-color: var(--border-light);
+  transform: translateY(-1px);
+}
+
+.peer-card.disconnected {
+  opacity: 0.6;
+}
+
+.peer-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.peer-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.peer-dot.connected {
+  background: var(--accent-green);
+  box-shadow: 0 0 6px rgba(34, 197, 94, 0.5);
+  animation: pulse-dot 2s ease-in-out infinite;
+}
+
+.peer-dot.disconnected {
+  background: var(--text-dim);
+}
+
+.peer-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.peer-remove {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  transition: var(--transition);
+}
+
+.peer-remove:hover {
+  color: var(--accent-red);
+  background: rgba(239, 68, 68, 0.1);
+}
+
+.peer-address {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
+
+.peer-details {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.peer-region {
+  padding: 2px 6px;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: var(--radius-full);
+}
+
+.peer-region.discovered {
+  background: rgba(168, 85, 247, 0.1);
+  color: #a78bfa;
+}
+
+.peer-latency {
+  font-family: var(--font-mono);
+}
+
+/* ============================================================
+   Predictions Grid (Price Predictor)
+   ============================================================ */
+
+.predictions-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 10px;
+}
+
+.prediction-card {
+  background: var(--bg-card-hover);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 12px;
+  text-align: center;
+  transition: var(--transition);
+}
+
+.prediction-card:hover {
+  border-color: var(--border-light);
+  transform: translateY(-1px);
+}
+
+.prediction-card.up {
+  border-color: rgba(34, 197, 94, 0.2);
+}
+
+.prediction-card.down {
+  border-color: rgba(239, 68, 68, 0.2);
+}
+
+.prediction-step {
+  font-size: 10px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 4px;
+}
+
+.prediction-price {
+  font-size: 18px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  margin-bottom: 4px;
+}
+
+.prediction-meta {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+}
+
+.prediction-confidence {
+  font-weight: 600;
+}
+
+.prediction-bar {
+  width: 100%;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.prediction-bar-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.3s;
+}
+
+/* ============================================================
+   Responsive: Adjust new component grids for mobile
+   ============================================================ */
+
+@media (max-width: 768px) {
+  .relay-node-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .peer-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .predictions-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .endpoint-row {
+    grid-template-columns: 40px 1fr;
+    grid-template-rows: auto auto;
+  }
+
+  .endpoint-priority,
+  .endpoint-badge {
+    grid-column: 2;
+    justify-self: start;
+  }
+
+  .endpoint-priority {
+    flex-direction: row;
+    align-items: center;
+    gap: 4px;
+  }
+}
+
+@media (max-width: 480px) {
+  .predictions-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* ============================================================

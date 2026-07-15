@@ -28,7 +28,7 @@ export default function SendBSC() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [derivedSender, setDerivedSender] = useState('')
-  const { addTx, addFailedTx } = useTransactionHistory()
+  const { addTx, addFailedTx, updateTxStatus } = useTransactionHistory()
   const { notifyTx } = useTelegram()
 
   const w3 = useProvider(BSC_RPCS)
@@ -161,7 +161,7 @@ export default function SendBSC() {
         const signingWallet = wallet.connect(w3)
         sentTx = await signingWallet.sendTransaction(tx)
       }
-      addTx({
+      const txId = addTx({
         chain: 'BSC',
         status: 'broadcast',
         tokenSymbol: txConfig.tokenSymbol,
@@ -173,6 +173,10 @@ export default function SendBSC() {
         explorerUrl: `https://bscscan.com/tx/${sentTx.hash}`,
         method: txConfig.signingMethod,
       })
+      // Wait for next-block confirmation in background
+      sentTx.wait()
+        .then(receipt => updateTxStatus(txId, 'confirmed', { blockNumber: receipt.blockNumber }))
+        .catch(() => console.warn('TX confirmation failed for', sentTx.hash))
       // Send Telegram notification (fire-and-forget)
       notifyTx({
         chain: 'BSC',

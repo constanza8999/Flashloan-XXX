@@ -1,0 +1,1864 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>⚡ Arbitrage Dashboard</title>
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        :root {
+            --bg-primary: #0f1119;
+            --bg-card: #1a1d2e;
+            --bg-card-hover: #222639;
+            --text-primary: #e8eaed;
+            --text-secondary: #9aa0b4;
+            --accent-green: #22c55e;
+            --accent-blue: #3b82f6;
+            --accent-purple: #a855f7;
+            --accent-orange: #f59e0b;
+            --accent-red: #ef4444;
+            --border: #2a2e42;
+            --shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
+        }
+
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            padding: 24px;
+        }
+
+        /* Header */
+        .header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 32px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+        }
+
+        .header h1 {
+            font-size: 24px;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .header-badge {
+            font-size: 28px;
+            line-height: 1;
+        }
+
+        .connection-status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            color: var(--text-secondary);
+        }
+
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: var(--accent-red);
+            transition: background 0.3s;
+            box-shadow: 0 0 8px rgba(239, 68, 68, 0.4);
+        }
+
+        .status-dot.connected {
+            background: var(--accent-green);
+            box-shadow: 0 0 8px rgba(34, 197, 94, 0.4);
+            animation: pulse-dot 2s ease-in-out infinite;
+        }
+
+        @keyframes pulse-dot {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.6; }
+        }
+
+        /* Stats Cards */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+
+        .stat-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 20px 24px;
+            transition: transform 0.2s, box-shadow 0.2s, border-color 0.2s;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow);
+            border-color: rgba(59, 130, 246, 0.3);
+        }
+
+        .stat-label {
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--text-secondary);
+            margin-bottom: 8px;
+        }
+
+        .stat-value {
+            font-size: 28px;
+            font-weight: 700;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .stat-value.green { color: var(--accent-green); }
+        .stat-value.blue { color: var(--accent-blue); }
+        .stat-value.purple { color: var(--accent-purple); }
+        .stat-value.orange { color: var(--accent-orange); }
+        .stat-value.red { color: var(--accent-red); }
+
+        .stat-sub {
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-top: 4px;
+        }
+
+        /* Main grid */
+        .main-grid {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 20px;
+        }
+
+        @media (max-width: 900px) {
+            .main-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 20px;
+        }
+
+        .card-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        /* Chart container */
+        .chart-container {
+            position: relative;
+            height: 280px;
+            width: 100%;
+        }
+
+        /* Opportunities list */
+        .opportunities-list {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .opportunities-list::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        .opportunities-list::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        .opportunities-list::-webkit-scrollbar-thumb {
+            background: var(--border);
+            border-radius: 2px;
+        }
+
+        .opportunity-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--border);
+            transition: background 0.15s;
+            cursor: pointer;
+        }
+
+        .opportunity-item:hover {
+            background: var(--bg-card-hover);
+        }
+
+        .opportunity-item:last-child {
+            border-bottom: none;
+        }
+
+        .opportunity-info {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .opportunity-pair {
+            font-weight: 600;
+            font-size: 14px;
+        }
+
+        .opportunity-route {
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        .opportunity-profit {
+            font-weight: 700;
+            font-size: 16px;
+            color: var(--accent-green);
+        }
+
+        .opportunity-profit.negative {
+            color: var(--accent-red);
+        }
+
+        .opportunity-time {
+            font-size: 11px;
+            color: var(--text-secondary);
+            margin-top: 2px;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 48px 20px;
+            color: var(--text-secondary);
+        }
+
+        .empty-state .icon {
+            font-size: 48px;
+            margin-bottom: 16px;
+            opacity: 0.5;
+        }
+
+        .empty-state p {
+            font-size: 14px;
+        }
+
+        /* Node health */
+        .node-health-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+            gap: 10px;
+            margin-top: 20px;
+        }
+
+        .node-card {
+            background: var(--bg-card-hover);
+            border-radius: 8px;
+            padding: 12px 14px;
+            border: 1px solid var(--border);
+        }
+
+        .node-name {
+            font-size: 12px;
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+
+        .node-status {
+            font-size: 11px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .node-status .dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--text-secondary);
+        }
+
+        .node-status .dot.online { background: var(--accent-green); }
+        .node-status .dot.offline { background: var(--accent-red); }
+
+        .node-latency {
+            font-size: 11px;
+            color: var(--text-secondary);
+        }
+
+        /* Footer logs */
+        .log-area {
+            margin-top: 24px;
+            padding: 16px;
+            background: #0a0c14;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', monospace;
+            font-size: 12px;
+            max-height: 160px;
+            overflow-y: auto;
+            color: var(--text-secondary);
+        }
+
+        .log-area::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        .log-area::-webkit-scrollbar-thumb {
+            background: var(--border);
+            border-radius: 2px;
+        }
+
+        .log-line {
+            padding: 2px 0;
+            opacity: 0;
+            animation: fade-in 0.3s forwards;
+        }
+
+        .log-line .time {
+            color: #64748b;
+        }
+
+        .log-line .info { color: var(--accent-blue); }
+        .log-line .profit { color: var(--accent-green); }
+        .log-line .error { color: var(--accent-red); }
+        .log-line .warn { color: var(--accent-orange); }
+
+        @keyframes fade-in {
+            to { opacity: 1; }
+        }
+
+        /* Withdraw Section */
+        .withdraw-field {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .withdraw-label {
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+        }
+
+        .withdraw-input {
+            width: 100%;
+            padding: 10px 14px;
+            background: #0d1117;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-size: 13px;
+            outline: none;
+            transition: border-color 0.2s, box-shadow 0.2s;
+        }
+
+        .withdraw-input:focus {
+            border-color: var(--accent-blue);
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+        }
+
+        .withdraw-input.mono {
+            font-family: 'JetBrains Mono', 'Fira Code', monospace;
+            font-size: 12px;
+        }
+
+        select.withdraw-input {
+            appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 12px center;
+            padding-right: 36px;
+            cursor: pointer;
+        }
+
+        select.withdraw-input option {
+            background: var(--bg-card);
+            color: var(--text-primary);
+        }
+
+        .wd-max-btn {
+            padding: 10px 14px;
+            background: var(--accent-blue);
+            border: none;
+            border-radius: 6px;
+            color: white;
+            font-size: 11px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: opacity 0.2s;
+            letter-spacing: 0.05em;
+        }
+
+        .wd-max-btn:hover {
+            opacity: 0.85;
+        }
+
+        .wd-balance-display {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 14px;
+            background: #0d1117;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            min-height: 42px;
+        }
+
+        .wd-balance-value {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--accent-green);
+            font-variant-numeric: tabular-nums;
+            flex: 1;
+        }
+
+        .wd-balance-sub {
+            font-size: 11px;
+            font-weight: 400;
+            color: var(--text-secondary);
+        }
+
+        .wd-error {
+            color: var(--accent-red);
+        }
+
+        .wd-refresh-btn {
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-size: 16px;
+            padding: 2px 6px;
+            border-radius: 4px;
+            transition: background 0.2s;
+        }
+
+        .wd-refresh-btn:hover {
+            background: rgba(255,255,255,0.08);
+        }
+
+        .wd-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 11px 20px;
+            border: none;
+            border-radius: 8px;
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .wd-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .wd-btn-primary {
+            background: linear-gradient(135deg, var(--accent-blue), #6366f1);
+            color: white;
+            box-shadow: 0 2px 8px rgba(59, 130, 246, 0.3);
+        }
+
+        .wd-btn-primary:hover:not(:disabled) {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 16px rgba(59, 130, 246, 0.4);
+        }
+
+        .wd-btn-warning {
+            background: linear-gradient(135deg, var(--accent-orange), #dc2626);
+            color: white;
+            box-shadow: 0 2px 8px rgba(239, 68, 68, 0.25);
+        }
+
+        .wd-btn-warning:hover:not(:disabled) {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 16px rgba(239, 68, 68, 0.35);
+        }
+
+        .wd-btn-secondary {
+            background: var(--bg-card-hover);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+        }
+
+        .wd-btn-secondary:hover:not(:disabled) {
+            background: var(--bg-card);
+            border-color: var(--border-light);
+        }
+
+        .wd-mono {
+            font-family: 'JetBrains Mono', 'Fira Code', monospace;
+            font-size: 12px;
+            word-break: break-all;
+        }
+
+        /* ─── Arbitrage Dashboard ─────────────────────────────────────── */
+        .arb-stats-bar {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+
+        .arb-stat {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 14px 18px;
+            text-align: center;
+            transition: transform 0.2s, border-color 0.2s;
+        }
+
+        .arb-stat:hover {
+            transform: translateY(-1px);
+            border-color: rgba(59, 130, 246, 0.3);
+        }
+
+        .arb-stat-label {
+            font-size: 10px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            margin-bottom: 4px;
+        }
+
+        .arb-stat-value {
+            font-size: 22px;
+            font-weight: 700;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .arb-controls {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+            flex-wrap: wrap;
+            margin-bottom: 16px;
+        }
+
+        .arb-btn {
+            padding: 8px 16px;
+            background: var(--bg-card-hover);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text-primary);
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .arb-btn:hover:not(:disabled) {
+            background: var(--bg-card);
+            border-color: var(--border-light);
+            transform: translateY(-1px);
+        }
+
+        .arb-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .arb-toggle {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+            color: var(--text-secondary);
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .arb-toggle input { display: none; }
+
+        .arb-toggle-slider {
+            width: 34px;
+            height: 18px;
+            background: var(--border);
+            border-radius: 9px;
+            position: relative;
+            transition: background 0.3s;
+        }
+
+        .arb-toggle-slider::after {
+            content: '';
+            position: absolute;
+            top: 2px;
+            left: 2px;
+            width: 14px;
+            height: 14px;
+            background: var(--text-secondary);
+            border-radius: 50%;
+            transition: all 0.3s;
+        }
+
+        .arb-toggle input:checked + .arb-toggle-slider {
+            background: var(--accent-green);
+        }
+
+        .arb-toggle input:checked + .arb-toggle-slider::after {
+            left: 18px;
+            background: white;
+        }
+
+        .arb-select {
+            padding: 8px 12px;
+            background: #0d1117;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-size: 12px;
+            outline: none;
+            cursor: pointer;
+            margin-left: auto;
+        }
+
+        .arb-select:focus {
+            border-color: var(--accent-blue);
+        }
+
+        .arb-timestamp {
+            font-size: 11px;
+            color: var(--text-dim);
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .arb-error {
+            padding: 12px 16px;
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            border-radius: 8px;
+            color: #fca5a5;
+            font-size: 13px;
+            margin-bottom: 16px;
+        }
+
+        .arb-badge {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 22px;
+            padding: 2px 8px;
+            background: var(--accent-orange);
+            color: #000;
+            border-radius: 999px;
+            font-size: 11px;
+            font-weight: 700;
+            margin-left: 8px;
+        }
+
+        /* Price Cards Grid */
+        #arb-prices-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+            gap: 10px;
+        }
+
+        #arb-prices-container .loading-state {
+            grid-column: 1 / -1;
+            text-align: center;
+            padding: 20px;
+            color: #666;
+        }
+
+        .arb-price-card {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 12px;
+            padding: 14px 16px;
+            transition: all 0.2s;
+        }
+
+        .arb-price-card:hover {
+            border-color: rgba(255, 255, 255, 0.15);
+            transform: translateY(-1px);
+        }
+
+        .arb-price-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 6px;
+        }
+
+        .arb-price-dex {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .arb-price-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+
+        .arb-price-dot.ethereum { background: #3b82f6; box-shadow: 0 0 8px rgba(59, 130, 246, 0.4); }
+        .arb-price-dot.bsc { background: #22c55e; box-shadow: 0 0 8px rgba(34, 197, 94, 0.4); }
+
+        .arb-price-dex-name {
+            font-size: 13px;
+            font-weight: 600;
+            color: #e0e0e0;
+        }
+
+        .arb-price-block {
+            font-size: 10px;
+            color: #888;
+            font-family: monospace;
+        }
+
+        .arb-price-value {
+            font-size: 20px;
+            font-weight: 700;
+            color: #fff;
+            margin-bottom: 4px;
+        }
+
+        .arb-price-meta {
+            display: flex;
+            justify-content: space-between;
+            font-size: 10px;
+            color: #888;
+        }
+
+        /* Opportunity Rows */
+        .arb-opp-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .arb-opp-row {
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            border-radius: 10px;
+            padding: 12px 16px;
+            transition: all 0.2s;
+        }
+
+        .arb-opp-row.high-confidence {
+            background: rgba(34, 197, 94, 0.06);
+            border-color: rgba(34, 197, 94, 0.2);
+        }
+
+        .arb-opp-row.med-confidence {
+            background: rgba(234, 179, 8, 0.06);
+            border-color: rgba(234, 179, 8, 0.2);
+        }
+
+        .arb-opp-main {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .arb-opp-left {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .arb-opp-index {
+            width: 28px;
+            height: 28px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            font-weight: 700;
+            flex-shrink: 0;
+        }
+
+        .arb-opp-index.high { background: rgba(34, 197, 94, 0.15); color: #22c55e; }
+        .arb-opp-index.med { background: rgba(234, 179, 8, 0.15); color: #eab308; }
+        .arb-opp-index.low { background: rgba(255, 255, 255, 0.05); color: #888; }
+
+        .arb-opp-pair {
+            font-weight: 600;
+            font-size: 14px;
+            color: #e0e0e0;
+        }
+
+        .arb-opp-route {
+            font-size: 11px;
+            color: #888;
+            margin-top: 2px;
+        }
+
+        .arb-opp-right {
+            text-align: right;
+        }
+
+        .arb-opp-profit {
+            font-weight: 700;
+            font-size: 16px;
+        }
+
+        .arb-opp-profit.positive { color: var(--accent-green); }
+        .arb-opp-profit.negative { color: var(--accent-red); }
+
+        .arb-opp-detail {
+            font-size: 11px;
+            color: #888;
+            margin-top: 2px;
+        }
+
+        .arb-opp-tags {
+            display: flex;
+            gap: 8px;
+            margin-top: 8px;
+        }
+
+        .arb-opp-tag {
+            padding: 2px 8px;
+            border-radius: 6px;
+            font-size: 10px;
+            font-weight: 600;
+        }
+
+        .arb-opp-tag.chain-eth { background: rgba(99, 102, 241, 0.1); color: #818cf8; }
+        .arb-opp-tag.chain-bsc { background: rgba(34, 197, 94, 0.1); color: #4ade80; }
+        .arb-opp-tag.strategy { background: rgba(59, 130, 246, 0.1); color: #60a5fa; }
+
+        .arb-exec-btn {
+            margin-left: auto;
+            background: linear-gradient(135deg, #3b82f6, #6366f1);
+            border: none;
+            color: #fff;
+            padding: 4px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 11px;
+            font-weight: 600;
+            transition: all 0.2s;
+        }
+
+        .arb-exec-btn:hover {
+            opacity: 0.85;
+        }
+
+        /* Execution History Table */
+        .arb-history-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+        }
+
+        .arb-history-table th {
+            padding: 10px 14px;
+            text-align: left;
+            font-size: 10px;
+            font-weight: 600;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            background: rgba(0, 0, 0, 0.2);
+            border-bottom: 1px solid var(--border);
+        }
+
+        .arb-history-table td {
+            padding: 8px 14px;
+            border-bottom: 1px solid rgba(42, 46, 66, 0.4);
+        }
+
+        .arb-history-table tr:hover td {
+            background: rgba(255, 255, 255, 0.02);
+        }
+
+        .arb-history-table .mono {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 10px;
+            color: #666;
+        }
+
+        .arb-status-confirmed { color: var(--accent-green); }
+        .arb-status-pending { color: var(--accent-orange); }
+        .arb-status-failed { color: var(--accent-red); }
+    </style>
+</head>
+<body>
+    <!-- Header -->
+    <div class="header">
+        <div class="header-left">
+            <span class="header-badge">⚡</span>
+            <h1>Arbitrage Dashboard</h1>
+        </div>
+        <div class="connection-status">
+            <span class="status-dot" id="status-dot"></span>
+            <span id="status-text">Disconnected</span>
+        </div>
+    </div>
+
+    <!-- Stats -->
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="stat-label">Total Profit</div>
+            <div class="stat-value green" id="total-profit">0.00</div>
+            <div class="stat-sub">USDT</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Active Trades</div>
+            <div class="stat-value blue" id="active-trades">0</div>
+            <div class="stat-sub">Open opportunities</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Transactions</div>
+            <div class="stat-value purple" id="total-txns">0</div>
+            <div class="stat-sub">Processed</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Nodes Online</div>
+            <div class="stat-value orange" id="nodes-online">0</div>
+            <div class="stat-sub">Relay network</div>
+        </div>
+    </div>
+
+    <!-- Live DEX Prices & Arbitrage Dashboard -->
+    <div class="arb-stats-bar" id="arb-stats">
+        <div class="arb-stat">
+            <div class="arb-stat-label">Total P&amp;L</div>
+            <div class="arb-stat-value" id="arb-total-pl" style="color: var(--accent-green);">$0.00</div>
+        </div>
+        <div class="arb-stat">
+            <div class="arb-stat-label">Trades</div>
+            <div class="arb-stat-value" id="arb-trades" style="color: var(--accent-blue);">0</div>
+        </div>
+        <div class="arb-stat">
+            <div class="arb-stat-label">Opportunities</div>
+            <div class="arb-stat-value" id="arb-opportunities-count" style="color: var(--accent-orange);">0</div>
+        </div>
+        <div class="arb-stat">
+            <div class="arb-stat-label">Live Prices</div>
+            <div class="arb-stat-value" id="arb-live-prices" style="color: var(--accent-purple);">0</div>
+        </div>
+    </div>
+
+    <!-- Arbitrage Controls -->
+    <div class="arb-controls">
+        <button id="arb-refresh-btn" class="arb-btn" onclick="fetchArbitragePrices()">
+            🔄 Refresh
+        </button>
+        <label class="arb-toggle">
+            <input type="checkbox" id="arb-auto-refresh" checked onchange="toggleAutoRefresh()">
+            <span class="arb-toggle-slider"></span>
+            Auto-refresh (12s)
+        </label>
+        <select id="arb-chain-filter" class="arb-select" onchange="filterArbitrage()">
+            <option value="all">All Chains</option>
+            <option value="ethereum">Ethereum</option>
+            <option value="bsc">BSC</option>
+        </select>
+        <span id="arb-last-update" class="arb-timestamp"></span>
+    </div>
+
+    <!-- Error Display -->
+    <div id="arb-error" class="arb-error" style="display: none;"></div>
+
+    <!-- Live DEX Prices -->
+    <div class="card" style="margin-top: 20px;">
+        <div class="card-title">📊 Live DEX Prices</div>
+        <div id="arb-prices-container" style="text-align: center; padding: 30px; color: #666;">
+            <div style="font-size: 32px; margin-bottom: 12px;">⏳</div>
+            <div>Fetching live prices from chain…</div>
+        </div>
+    </div>
+
+    <!-- Arbitrage Opportunities -->
+    <div class="card" style="margin-top: 20px;">
+        <div class="card-title">🚀 Arbitrage Opportunities <span id="arb-opp-badge" class="arb-badge">0</span></div>
+        <div id="arb-opportunities-container">
+            <div style="text-align: center; padding: 40px 20px; color: #666;">
+                <div style="font-size: 48px; margin-bottom: 16px; opacity: 0.5;">🔍</div>
+                <div>Waiting for price disparities across DEXes...</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Execution History -->
+    <div id="arb-history-section" class="card" style="margin-top: 20px; display: none;">
+        <div class="card-title">📜 Execution History</div>
+        <div style="overflow-x: auto;">
+            <table class="arb-history-table" id="arb-history-table">
+                <thead>
+                    <tr>
+                        <th>Time</th>
+                        <th>Pair</th>
+                        <th>Strategy</th>
+                        <th>Profit</th>
+                        <th>Status</th>
+                        <th>Tx Hash</th>
+                    </tr>
+                </thead>
+                <tbody id="arb-history-body"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Main Grid -->
+    <div class="main-grid">
+        <!-- Chart -->
+        <div class="card">
+            <div class="card-title">📈 Profit Over Time</div>
+            <div class="chart-container">
+                <canvas id="profit-chart"></canvas>
+            </div>
+        </div>
+
+        <!-- Opportunities -->
+        <div class="card">
+            <div class="card-title">🎯 Active Opportunities</div>
+            <div class="opportunities-list" id="opportunities-list">
+                <div class="empty-state" id="empty-state">
+                    <div class="icon">🔍</div>
+                    <p>Waiting for arbitrage opportunities…</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Node Health -->
+    <div class="card" style="margin-top: 20px;">
+        <div class="card-title">🌐 Relay Node Health</div>
+        <div class="node-health-grid" id="node-health-grid">
+            <p style="color: var(--text-secondary); font-size: 13px;">Waiting for node data…</p>
+        </div>
+    </div>
+
+    <!-- Withdraw Section -->
+    <div class="card" style="margin-top: 20px;">
+        <div class="card-title">💸 Withdraw Profits</div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+            <!-- Chain Selector -->
+            <div class="withdraw-field">
+                <label class="withdraw-label">Chain</label>
+                <select id="wd-chain" class="withdraw-input">
+                    <option value="ethereum">Ethereum (ETH)</option>
+                    <option value="bsc">BNB Smart Chain (BSC)</option>
+                </select>
+            </div>
+
+            <!-- Token Selector -->
+            <div class="withdraw-field">
+                <label class="withdraw-label">Asset</label>
+                <select id="wd-token" class="withdraw-input">
+                    <option value="">Native Coin (ETH/BNB)</option>
+                    <option value="USDT">USDT</option>
+                    <option value="WETH">WETH / WBNB</option>
+                </select>
+            </div>
+
+            <!-- Destination Address -->
+            <div class="withdraw-field" style="grid-column: 1 / -1;">
+                <label class="withdraw-label">Destination Address</label>
+                <input type="text" id="wd-destination" class="withdraw-input mono"
+                       placeholder="0x... (your wallet address)">
+            </div>
+
+            <!-- Amount -->
+            <div class="withdraw-field">
+                <label class="withdraw-label">Amount</label>
+                <div style="display: flex; gap: 6px;">
+                    <input type="text" id="wd-amount" class="withdraw-input"
+                           placeholder="Leave empty for max" style="flex: 1;">
+                    <button id="wd-max-btn" class="wd-max-btn" title="Max amount">MAX</button>
+                </div>
+            </div>
+
+            <!-- Contract Balance -->
+            <div class="withdraw-field">
+                <label class="withdraw-label">Contract Balance</label>
+                <div id="wd-balance" class="wd-balance-display">
+                    <span class="wd-balance-value">—</span>
+                    <button id="wd-refresh-balance" class="wd-refresh-btn" title="Refresh">🔄</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Action Buttons -->
+        <div style="display: flex; gap: 12px; margin-top: 16px;">
+            <button id="wd-withdraw-btn" class="wd-btn wd-btn-primary" onclick="handleWithdraw()">
+                💸 Withdraw
+            </button>
+            <button id="wd-sweep-btn" class="wd-btn wd-btn-warning" onclick="handleSweep()">
+                🧹 Sweep All
+            </button>
+            <button id="wd-check-balance-btn" class="wd-btn wd-btn-secondary" onclick="fetchBalances()">
+                🔄 Check Balances
+            </button>
+        </div>
+
+        <!-- Transaction Result -->
+        <div id="wd-result" style="display: none; margin-top: 16px; padding: 16px; border-radius: 8px;"></div>
+    </div>
+
+    <!-- Live Logs -->
+    <div class="log-area" id="log-area">
+        <div class="log-line"><span class="time">[init]</span> Dashboard initialized. Waiting for WebSocket connection…</div>
+    </div>
+
+    <script>
+        // ─── Chart Initialization ────────────────────────────────────────
+        const ctx = document.getElementById('profit-chart').getContext('2d');
+
+        const profitChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'Profit (USDT)',
+                    data: [],
+                    borderColor: '#22c55e',
+                    backgroundColor: 'rgba(34, 197, 94, 0.08)',
+                    borderWidth: 2,
+                    fill: true,
+                    tension: 0.3,
+                    pointRadius: 3,
+                    pointBackgroundColor: '#22c55e',
+                    pointBorderColor: '#0f1119',
+                    pointBorderWidth: 2,
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        labels: { color: '#9aa0b4', font: { size: 11 } }
+                    }
+                },
+                scales: {
+                    x: {
+                        ticks: { color: '#64748b', maxTicksLimit: 8, font: { size: 10 } },
+                        grid: { color: 'rgba(42, 46, 66, 0.6)' },
+                    },
+                    y: {
+                        beginAtZero: true,
+                        ticks: { color: '#64748b', font: { size: 10 }, callback: v => v.toFixed(2) },
+                        grid: { color: 'rgba(42, 46, 66, 0.6)' },
+                    }
+                },
+                animation: { duration: 400 }
+            }
+        });
+
+        // ─── Helpers ────────────────────────────────────────────────────
+        function addLog(message, type = 'info') {
+            const logArea = document.getElementById('log-area');
+            const time = new Date().toLocaleTimeString();
+            const line = document.createElement('div');
+            line.className = 'log-line';
+            line.innerHTML = `<span class="time">[${time}]</span> <span class="${type}">${message}</span>`;
+            logArea.appendChild(line);
+            logArea.scrollTop = logArea.scrollHeight;
+
+            // Keep only last 200 lines
+            while (logArea.children.length > 200) {
+                logArea.removeChild(logArea.firstChild);
+            }
+        }
+
+        function formatTime(ts) {
+            if (!ts) return '—';
+            const d = new Date(ts);
+            return d.toLocaleTimeString();
+        }
+
+        function renderOpportunities(opps) {
+            const container = document.getElementById('opportunities-list');
+            const empty = document.getElementById('empty-state');
+
+            if (!opps || opps.length === 0) {
+                container.innerHTML = `
+                    <div class="empty-state" id="empty-state">
+                        <div class="icon">🔍</div>
+                        <p>Waiting for arbitrage opportunities…</p>
+                    </div>
+                `;
+                return;
+            }
+
+            container.innerHTML = opps.map(opp => {
+                const profit = parseFloat(opp.profit || 0);
+                const profitClass = profit >= 0 ? '' : 'negative';
+                return `
+                    <div class="opportunity-item">
+                        <div class="opportunity-info">
+                            <span class="opportunity-pair">${opp.pair || 'Unknown Pair'}</span>
+                            <span class="opportunity-route">${opp.route || '—'}</span>
+                            <span class="opportunity-time">${formatTime(opp.timestamp)}</span>
+                        </div>
+                        <span class="opportunity-profit ${profitClass}">${profit >= 0 ? '+' : ''}${profit.toFixed(4)}</span>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function renderNodeHealth(nodes) {
+            const grid = document.getElementById('node-health-grid');
+            if (!nodes || Object.keys(nodes).length === 0) {
+                grid.innerHTML = '<p style="color: var(--text-secondary); font-size: 13px;">Waiting for node data…</p>';
+                return;
+            }
+
+            grid.innerHTML = Object.entries(nodes).map(([name, info]) => {
+                const status = (info.status || 'offline').toLowerCase();
+                const latency = info.latency ? `${info.latency}ms` : '—';
+                return `
+                    <div class="node-card">
+                        <div class="node-name">${name}</div>
+                        <div class="node-status">
+                            <span class="dot ${status}"></span>
+                            <span>${status}</span>
+                        </div>
+                        <div class="node-latency">${latency}</div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function updateConnectionStatus(connected) {
+            const dot = document.getElementById('status-dot');
+            const text = document.getElementById('status-text');
+            dot.className = 'status-dot' + (connected ? ' connected' : '');
+            text.textContent = connected ? 'Connected' : 'Disconnected';
+        }
+
+        // ─── Socket.IO Connection ───────────────────────────────────────
+        const socket = io(window.location.origin, {
+            transports: ['websocket', 'polling'],
+            reconnection: true,
+            reconnectionDelay: 1000,
+            reconnectionAttempts: Infinity,
+        });
+
+        socket.on('connect', () => {
+            updateConnectionStatus(true);
+            addLog('WebSocket connected', 'info');
+        });
+
+        socket.on('disconnect', () => {
+            updateConnectionStatus(false);
+            addLog('WebSocket disconnected — reconnecting…', 'warn');
+        });
+
+        socket.on('connect_error', (err) => {
+            addLog(`Connection error: ${err.message}`, 'error');
+        });
+
+        // ─── Dashboard Update Event ─────────────────────────────────────
+        socket.on('update_dashboard', (data) => {
+            // Stats
+            const profit = data.total_profit || 0;
+            document.getElementById('total-profit').textContent = parseFloat(profit).toFixed(2);
+            document.getElementById('active-trades').textContent = data.active_transactions || 0;
+
+            const txCount = data.total_txns || data.active_transactions || 0;
+            document.getElementById('total-txns').textContent = txCount;
+
+            // Node health
+            const nodes = data.node_health || {};
+            renderNodeHealth(nodes);
+            document.getElementById('nodes-online').textContent =
+                Object.values(nodes).filter(n => (n.status || '').toLowerCase() === 'online').length;
+
+            // Opportunities
+            const opportunities = data.opportunities || [];
+            if (opportunities.length > 0) {
+                renderOpportunities(opportunities);
+            }
+
+            // Chart — add latest profit point
+            if (data.last_opportunity && data.last_opportunity.profit !== undefined) {
+                const ts = data.last_opportunity.timestamp || new Date().toISOString();
+                const profitVal = parseFloat(data.last_opportunity.profit);
+
+                profitChart.data.labels.push(new Date(ts).toLocaleTimeString());
+                profitChart.data.datasets[0].data.push(profitVal);
+
+                // Keep last 50 points
+                if (profitChart.data.labels.length > 50) {
+                    profitChart.data.labels.shift();
+                    profitChart.data.datasets[0].data.shift();
+                }
+
+                profitChart.update();
+            }
+
+            // Log
+            if (data.last_opportunity) {
+                const opp = data.last_opportunity;
+                addLog(
+                    `Opportunity${opp.pair ? ' ' + opp.pair : ''}: ${parseFloat(opp.profit || 0).toFixed(4)} USDT`,
+                    'profit'
+                );
+            }
+        });
+
+        // ─── Withdraw Functions ───────────────────────────────────────────
+        async function fetchBalances() {
+            const resultDiv = document.getElementById('wd-result');
+            const balanceEl = document.getElementById('wd-balance');
+            const btn = document.getElementById('wd-check-balance-btn');
+            btn.disabled = true;
+            btn.textContent = '⏳ Loading...';
+
+            try {
+                const resp = await fetch('/api/balances');
+                const data = await resp.json();
+
+                if (data.error) {
+                    showWithdrawResult('error', `Error: ${data.error}`);
+                    return;
+                }
+
+                // Show balance for selected chain
+                const chain = document.getElementById('wd-chain').value;
+                const chainData = data[chain];
+                if (!chainData) {
+                    showWithdrawResult('warn', `No data for ${chain}`);
+                    return;
+                }
+
+                if (chainData.error) {
+                    balanceEl.innerHTML = `<span class="wd-balance-value wd-error">${chainData.error}</span>`;
+                } else {
+                    const native = chainData.native;
+                    const tokens = chainData.tokens || {};
+
+                    let html = `<span class="wd-balance-value">${native.balance_formatted?.toFixed(6) || '0'} ${native.symbol}</span>`;
+                    for (const [name, t] of Object.entries(tokens)) {
+                        if (t.balance_formatted > 0) {
+                            html += `<br><span class="wd-balance-sub">${t.balance_formatted.toFixed(4)} ${t.symbol}</span>`;
+                        }
+                    }
+                    balanceEl.innerHTML = html;
+                }
+
+                showWithdrawResult('success', `Balances loaded for ${chain}`);
+            } catch (err) {
+                showWithdrawResult('error', `Failed: ${err.message}`);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '🔄 Check Balances';
+            }
+        }
+
+        async function handleWithdraw() {
+            const btn = document.getElementById('wd-withdraw-btn');
+            const chain = document.getElementById('wd-chain').value;
+            const token = document.getElementById('wd-token').value;
+            const dest = document.getElementById('wd-destination').value.trim();
+            const amount = document.getElementById('wd-amount').value.trim();
+
+            if (!dest || !dest.startsWith('0x')) {
+                showWithdrawResult('error', 'Please enter a valid destination address');
+                return;
+            }
+
+            btn.disabled = true;
+            btn.textContent = '⏳ Sending transaction...';
+
+            try {
+                const body = { chain, destination: dest };
+                if (token) body.token = token;
+                if (amount) body.amount = amount;
+
+                const resp = await fetch('/api/withdraw', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body),
+                });
+
+                const data = await resp.json();
+
+                if (data.success) {
+                    const explorerLink = data.explorer_url
+                        ? `<a href="${data.explorer_url}" target="_blank" style="color: #3b82f6;">🔗 View on Explorer</a>`
+                        : '';
+                    showWithdrawResult('success', `
+                        <strong>✅ Transaction ${data.status}</strong><br>
+                        <span class="mono">${data.tx_hash}</span><br>
+                        Block: ${data.block_number || 'pending'}<br>
+                        ${explorerLink}
+                    `);
+                    addLog(`Withdraw: ${data.tx_hash.slice(0, 18)}... (${data.status})`, 'profit');
+                    // Refresh balances after a delay
+                    setTimeout(fetchBalances, 5000);
+                } else {
+                    showWithdrawResult('error', `❌ ${data.detail || data.error || 'Unknown error'}`);
+                }
+            } catch (err) {
+                showWithdrawResult('error', `Network error: ${err.message}`);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '💸 Withdraw';
+            }
+        }
+
+        async function handleSweep() {
+            const btn = document.getElementById('wd-sweep-btn');
+            const chain = document.getElementById('wd-chain').value;
+            const dest = document.getElementById('wd-destination').value.trim();
+
+            if (!dest || !dest.startsWith('0x')) {
+                showWithdrawResult('error', 'Please enter a valid destination address');
+                return;
+            }
+
+            if (!confirm(`Sweep ALL funds from ${chain} contract to ${dest.slice(0, 10)}...?`)) {
+                return;
+            }
+
+            btn.disabled = true;
+            btn.textContent = '⏳ Sweeping...';
+
+            try {
+                const resp = await fetch('/api/sweep', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ chain, destination: dest }),
+                });
+
+                const data = await resp.json();
+
+                if (data.success) {
+                    const txList = data.transactions
+                        .map(t => t.tx_hash
+                            ? `<span class="mono">${t.type === 'native' ? '💰 Native' : `🔸 ${t.name}`}: ${t.tx_hash.slice(0, 18)}...</span>`
+                            : `<span class="wd-error">${t.type}: ${t.error}</span>`
+                        ).join('<br>');
+                    showWithdrawResult('success', `
+                        <strong>✅ Sweep Complete</strong><br>
+                        ${txList}
+                    `);
+                    addLog(`Sweep completed: ${data.transactions.filter(t => t.tx_hash).length} txs`, 'profit');
+                    setTimeout(fetchBalances, 5000);
+                } else {
+                    showWithdrawResult('error', `❌ ${data.detail || data.error || 'Sweep failed'}`);
+                }
+            } catch (err) {
+                showWithdrawResult('error', `Network error: ${err.message}`);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '🧹 Sweep All';
+            }
+        }
+
+        function showWithdrawResult(type, message) {
+            const div = document.getElementById('wd-result');
+            div.style.display = 'block';
+            const colors = {
+                success: 'rgba(34,197,94,0.1)',
+                error: 'rgba(239,68,68,0.1)',
+                warn: 'rgba(234,179,8,0.1)',
+            };
+            const borders = {
+                success: 'rgba(34,197,94,0.3)',
+                error: 'rgba(239,68,68,0.3)',
+                warn: 'rgba(234,179,8,0.3)',
+            };
+            div.style.background = colors[type] || colors.warn;
+            div.style.border = `1px solid ${borders[type] || borders.warn}`;
+            div.innerHTML = message;
+            div.style.fontSize = '13px';
+            div.style.lineHeight = '1.6';
+        }
+
+        // Wire up MAX button and chain selector
+        document.getElementById('wd-max-btn').addEventListener('click', () => {
+            document.getElementById('wd-amount').value = ''; // Empty = max
+        });
+        document.getElementById('wd-chain').addEventListener('change', fetchBalances);
+
+        // ═══════════════════════════════════════════════════════════════════
+        // ARBITRAGE DASHBOARD — Live DEX Price Monitor
+        // ═══════════════════════════════════════════════════════════════════
+        // Prices are fetched server-side via /api/prices to avoid CORS issues.
+
+        // ─── State ────────────────────────────────────────────────────────
+        let arbPrices = [];
+        let arbOpportunities = [];
+        let arbExecHistory = [];
+        let arbStats = { totalProfit: 0, tradesExecuted: 0, opportunitiesFound: 0 };
+        let arbAutoRefreshInterval = null;
+        let arbLoading = false;
+
+        // ─── Formatting ───────────────────────────────────────────────────
+        function formatArbPrice(p) {
+            if (p === null || p === undefined) return '—';
+            if (p < 0.001) return p.toExponential(4);
+            if (p < 1) return p.toFixed(6);
+            if (p < 100) return p.toFixed(4);
+            return p.toLocaleString(undefined, { maximumFractionDigits: 2 });
+        }
+
+        function formatArbProfit(p) {
+            if (p === null || p === undefined) return '—';
+            const abs = Math.abs(p);
+            const str = abs < 0.01 ? '$0.00' : '$' + abs.toFixed(2);
+            return p >= 0 ? '+' + str : '-' + str;
+        }
+
+        // ─── Web3 Provider ───────────────────────────────────────────────
+        async function getProvider(chain) {
+            const rpcs = RPCS[chain];
+            if (!rpcs) return null;
+            for (const rpc of rpcs) {
+                try {
+                    const provider = new ethers.providers.JsonRpcProvider(rpc);
+                    await provider.getBlockNumber();
+                    return provider;
+                } catch (e) {
+                    // try next
+                }
+            }
+            return null;
+        }
+
+        // ─── Fetch Prices (via server-side proxy to avoid CORS) ─────────
+        async function fetchArbitragePrices() {
+            if (arbLoading) return;
+            arbLoading = true;
+
+            const btn = document.getElementById('arb-refresh-btn');
+            btn.disabled = true;
+            btn.textContent = '⏳ Fetching...';
+
+            const errorDiv = document.getElementById('arb-error');
+            errorDiv.style.display = 'none';
+
+            try {
+                const resp = await fetch('/api/prices');
+                const data = await resp.json();
+
+                if (data.error) {
+                    throw new Error(data.error);
+                }
+
+                arbPrices = data.prices || [];
+                arbOpportunities = data.opportunities || [];
+
+                if (arbOpportunities.length > 0) {
+                    arbStats.opportunitiesFound += arbOpportunities.length;
+                }
+
+                // ─── Update Last Update Timestamp ───────────────────────
+                const ts = document.getElementById('arb-last-update');
+                ts.textContent = 'Updated: ' + new Date().toLocaleTimeString();
+
+            } catch (err) {
+                errorDiv.style.display = 'block';
+                errorDiv.textContent = '⚠ ' + (err.message || 'Unknown error');
+            }
+
+            // Render everything
+            renderArbPrices();
+            renderArbOpportunities();
+            renderArbStats();
+
+            arbLoading = false;
+            btn.disabled = false;
+            btn.textContent = '🔄 Refresh';
+        }
+
+        // ─── Render Price Cards ───────────────────────────────────────────
+        function renderArbPrices() {
+            const container = document.getElementById('arb-prices-container');
+
+            if (arbPrices.length === 0) {
+                container.innerHTML = '<div class="loading-state">No prices loaded yet.</div>';
+                return;
+            }
+
+            container.innerHTML = arbPrices.map(p => {
+                const dotClass = p.chain === 'ethereum' ? 'ethereum' : 'bsc';
+                const chainName = p.chain === 'ethereum' ? 'ETH' : 'BSC';
+                return `
+                    <div class="arb-price-card">
+                        <div class="arb-price-header">
+                            <div class="arb-price-dex">
+                                <span class="arb-price-dot ${dotClass}"></span>
+                                <span class="arb-price-dex-name">${p.dex}</span>
+                            </div>
+                            <span class="arb-price-block">#${p.block}</span>
+                        </div>
+                        <div class="arb-price-value">${formatArbPrice(p.price)}</div>
+                        <div class="arb-price-meta">
+                            <span>${p.pair}</span>
+                            <span>${chainName} · ${p.fee}bps</span>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // ─── Render Opportunities ─────────────────────────────────────────
+        function renderArbOpportunities() {
+            const container = document.getElementById('arb-opportunities-container');
+            const filter = document.getElementById('arb-chain-filter').value;
+
+            const filtered = filter === 'all'
+                ? arbOpportunities
+                : arbOpportunities.filter(o => o.chain === filter);
+
+            const badge = document.getElementById('arb-opp-badge');
+            badge.textContent = filtered.length;
+
+            if (filtered.length === 0) {
+                container.innerHTML = `
+                    <div style="text-align: center; padding: 40px 20px; color: #666;">
+                        <div style="font-size: 48px; margin-bottom: 16px; opacity: 0.5;">🔍</div>
+                        <div>No arbitrage opportunities detected</div>
+                        <div style="font-size: 12px; color: #555; margin-top: 4px;">
+                            Waiting for price disparities across DEXes...
+                        </div>
+                    </div>
+                `;
+                return;
+            }
+
+            container.innerHTML = `
+                <div class="arb-opp-list">
+                    ${filtered.slice(0, 10).map((opp, i) => {
+                        const confidencePct = Math.round((opp.confidence || 0) * 100);
+                        const rowClass = confidencePct > 70 ? 'high-confidence' : confidencePct > 40 ? 'med-confidence' : '';
+                        const indexClass = confidencePct > 70 ? 'high' : confidencePct > 40 ? 'med' : 'low';
+                        const profitClass = opp.netProfit >= 0 ? 'positive' : 'negative';
+                        const chainTagClass = opp.chain === 'ethereum' ? 'chain-eth' : 'chain-bsc';
+
+                        return `
+                            <div class="arb-opp-row ${rowClass}">
+                                <div class="arb-opp-main">
+                                    <div class="arb-opp-left">
+                                        <span class="arb-opp-index ${indexClass}">${i + 1}</span>
+                                        <div>
+                                            <div class="arb-opp-pair">${opp.tokenIn} → ${opp.tokenOut}</div>
+                                            <div class="arb-opp-route">${opp.buyDex} @ ${formatArbPrice(opp.buyPrice)} → ${opp.sellDex} @ ${formatArbPrice(opp.sellPrice)}</div>
+                                        </div>
+                                    </div>
+                                    <div class="arb-opp-right">
+                                        <div class="arb-opp-profit ${profitClass}">${formatArbProfit(opp.netProfit)}</div>
+                                        <div class="arb-opp-detail">${opp.spreadBps}bps spread · ${confidencePct}% conf</div>
+                                    </div>
+                                </div>
+                                <div class="arb-opp-tags">
+                                    <span class="arb-opp-tag ${chainTagClass}">${opp.chain}</span>
+                                    <span class="arb-opp-tag strategy">${opp.strategy}</span>
+                                    <button class="arb-exec-btn" onclick="executeArbitrage(${i})">⚡ Execute</button>
+                                </div>
+                            </div>
+                        `;
+                    }).join('')}
+                </div>
+            `;
+        }
+
+        // ─── Render Stats ─────────────────────────────────────────────────
+        function renderArbStats() {
+            document.getElementById('arb-total-pl').textContent = formatArbProfit(arbStats.totalProfit);
+            document.getElementById('arb-total-pl').style.color = arbStats.totalProfit >= 0 ? 'var(--accent-green)' : 'var(--accent-red)';
+            document.getElementById('arb-trades').textContent = arbStats.tradesExecuted;
+            document.getElementById('arb-opportunities-count').textContent = arbOpportunities.length;
+            document.getElementById('arb-live-prices').textContent = arbPrices.length;
+        }
+
+        // ─── Execute (Simulated) ──────────────────────────────────────────
+        function executeArbitrage(index) {
+            const filter = document.getElementById('arb-chain-filter').value;
+            const filtered = filter === 'all'
+                ? arbOpportunities
+                : arbOpportunities.filter(o => o.chain === filter);
+
+            const opp = filtered[index];
+            if (!opp) return;
+
+            const txHash = '0x' + Array.from({ length: 64 }, () =>
+                Math.floor(Math.random() * 16).toString(16)
+            ).join('');
+
+            arbExecHistory.unshift({
+                id: Date.now(),
+                timestamp: Date.now(),
+                tokenIn: opp.tokenIn,
+                tokenOut: opp.tokenOut,
+                buyDex: opp.buyDex,
+                sellDex: opp.sellDex,
+                profit: opp.netProfit,
+                txHash,
+                status: 'pending',
+            });
+
+            if (arbExecHistory.length > 50) arbExecHistory = arbExecHistory.slice(0, 50);
+
+            arbStats.tradesExecuted++;
+            arbStats.totalProfit += opp.netProfit;
+
+            renderArbStats();
+            renderArbHistory();
+
+            // Simulate confirmation
+            setTimeout(() => {
+                arbExecHistory = arbExecHistory.map(tx =>
+                    tx.id === Date.now() ? { ...tx, status: 'confirmed' } : tx
+                );
+                renderArbHistory();
+            }, 30000);
+
+            addLog(`Executed ${opp.tokenIn}->${opp.tokenOut} on ${opp.chain}: ${formatArbProfit(opp.netProfit)}`, 'profit');
+        }
+
+        // ─── Render Execution History ─────────────────────────────────────
+        function renderArbHistory() {
+            const section = document.getElementById('arb-history-section');
+            const body = document.getElementById('arb-history-body');
+
+            if (arbExecHistory.length === 0) {
+                section.style.display = 'none';
+                return;
+            }
+
+            section.style.display = 'block';
+
+            body.innerHTML = arbExecHistory.slice(0, 20).map(tx => {
+                const statusClass = tx.status === 'confirmed' ? 'arb-status-confirmed' :
+                    tx.status === 'failed' ? 'arb-status-failed' : 'arb-status-pending';
+                const statusText = tx.status === 'confirmed' ? '✅ Confirmed' :
+                    tx.status === 'failed' ? '❌ Failed' : '⏳ Pending';
+                const profitClass = tx.profit >= 0 ? 'positive' : 'negative';
+
+                return `
+                    <tr>
+                        <td style="color: #888;">${new Date(tx.timestamp).toLocaleTimeString()}</td>
+                        <td>${tx.tokenIn}/${tx.tokenOut}</td>
+                        <td><span class="arb-opp-tag strategy">${tx.buyDex} → ${tx.sellDex}</span></td>
+                        <td class="arb-opp-profit ${profitClass}">${formatArbProfit(tx.profit)}</td>
+                        <td class="${statusClass}">${statusText}</td>
+                        <td class="mono">${tx.txHash.slice(0, 10)}...${tx.txHash.slice(-4)}</td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        // ─── Filter Change ────────────────────────────────────────────────
+        function filterArbitrage() {
+            renderArbOpportunities();
+        }
+
+        // ─── Auto-Refresh Toggle ──────────────────────────────────────────
+        function toggleAutoRefresh() {
+            const enabled = document.getElementById('arb-auto-refresh').checked;
+            if (arbAutoRefreshInterval) {
+                clearInterval(arbAutoRefreshInterval);
+                arbAutoRefreshInterval = null;
+            }
+            if (enabled) {
+                arbAutoRefreshInterval = setInterval(fetchArbitragePrices, 12000);
+            }
+        }
+
+        // ─── Arbitrage Detection Logic ────────────────────────────────────
+        function detectArbitrage(prices) {
+            const opportunities = [];
+
+            // Group by (chain, pair)
+            const groups = {};
+            for (const p of prices) {
+                const key = p.chain + ':' + p.pair;
+                if (!groups[key]) groups[key] = [];
+                groups[key].push(p);
+            }
+
+            for (const key of Object.keys(groups)) {
+                const dexPrices = groups[key];
+                if (dexPrices.length < 2) continue;
+
+                // Sort by price ascending
+                const sorted = [...dexPrices].sort((a, b) => a.price - b.price);
+                const buy = sorted[0];
+                const sell = sorted[sorted.length - 1];
+
+                const spread = (sell.price - buy.price) / buy.price;
+                const spreadBps = Math.round(spread * 10000);
+
+                if (spreadBps < 20) continue;
+
+                // Estimate gas cost
+                const gasCostUsdt = buy.chain === 'ethereum' ? 8.0 : 0.5;
+
+                // Estimate profit (simplified)
+                const positionSize = 10000;
+                const grossProfit = positionSize * spread;
+                const slippage = positionSize * 0.0005;
+                const netProfit = grossProfit - gasCostUsdt - slippage * 2;
+
+                const confidence = Math.min(1, Math.max(0,
+                    (spread / 0.01) * 0.4 +
+                    (netProfit / 50) * 0.3 +
+                    (1 - gasCostUsdt / Math.max(netProfit, 1)) * 0.3
+                ));
+
+                const [tokenIn, tokenOut] = buy.pair.split('/');
+                const chain = buy.chain;
+                const strategy = chain === 'ethereum' ? 'Flashbots' : 'Flash Loan';
+
+                opportunities.push({
+                    buyDex: buy.dex,
+                    sellDex: sell.dex,
+                    buyPrice: buy.price,
+                    sellPrice: sell.price,
+                    chain,
+                    tokenIn,
+                    tokenOut,
+                    spreadBps,
+                    netProfit,
+                    confidence,
+                    liquidity: Math.min(buy.liquidity, sell.liquidity),
+                    strategy,
+                });
+            }
+
+            opportunities.sort((a, b) => b.netProfit - a.netProfit);
+            return opportunities;
+        }
+
+        // ─── Initialize ───────────────────────────────────────────────────
+        // Start auto-refresh and do initial fetch
+        setTimeout(() => {
+            fetchArbitragePrices();
+            arbAutoRefreshInterval = setInterval(fetchArbitragePrices, 12000);
+        }, 500);
+
+        addLog('Dashboard ready — connecting to server…', 'info');
+    </script>
+</body>
+</html>
