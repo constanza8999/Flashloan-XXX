@@ -75,6 +75,31 @@ function buildEIP712Domain(chainId, verifyingContract) {
   return { name: 'TrustedForwarder', version: '1.0.0', chainId, verifyingContract }
 }
 
+// ─── Raw Tx Inspector: field display component ───────────────────────────
+function TxField({ label, value, mono, copy }) {
+  return (
+    <div className="result-item" style={{ marginBottom: 4 }}>
+      <span className="ri-label" style={{ fontSize: 10, color: '#888', display: 'block', marginBottom: 2 }}>{label}</span>
+      <span className={`ri-value${mono ? ' mono' : ''}`} style={{
+        fontSize: 11, color: '#e0e0e0', wordBreak: 'break-all',
+        display: 'flex', alignItems: 'center', gap: 6,
+      }}>
+        {value?.length > 42 && mono ? `${value.slice(0, 10)}...${value.slice(-6)}` : value}
+        {copy && value && (
+          <button
+            onClick={() => navigator.clipboard.writeText(value)}
+            style={{
+              background: 'none', border: 'none', color: '#666', cursor: 'pointer',
+              fontSize: 11, padding: '2px 4px', borderRadius: 4, flexShrink: 0,
+            }}
+            title={`Copy ${label}`}
+          >📋</button>
+        )}
+      </span>
+    </div>
+  )
+}
+
 export default function GaslessRelay() {
   const { signer: walletSigner, walletAddress, isConnected } = useWeb3()
   const w3 = useProvider(ETH_RPCS)
@@ -101,6 +126,14 @@ export default function GaslessRelay() {
   const [nonce, setNonce] = useState(null)
   const [nonceLoading, setNonceLoading] = useState(false)
   const [discoveredSources, setDiscoveredSources] = useState(null)
+
+  // ─── State: Raw Tx Inspector ───────────────────────────────────────────
+  const [inspectTxHash, setInspectTxHash] = useState('')
+  const [inspectRawHex, setInspectRawHex] = useState('')
+  const [fetchedTx, setFetchedTx] = useState(null)
+  const [decodedTx, setDecodedTx] = useState(null)
+  const [fetchLoading, setFetchLoading] = useState(false)
+  const [decodeLoading, setDecodeLoading] = useState(false)
 
   // ─── Load previously discovered nodes from localStorage on mount ──────
   useEffect(() => {
@@ -537,6 +570,153 @@ export default function GaslessRelay() {
     setLoading(false)
   }, [forwarderAddress, targetContract, callData, deadlineMin, gasLimitMeta, useWalletSign, isConnected, walletAddress, walletSigner, privateKey, forwarderContract, relayNodes, nonce, chainId, addTx, updateTxStatus, fetchNonce, addLog])
 
+  // ─── Raw Tx Inspector: Fetch from tx hash ────────────────────────────
+  const [decodedForwardRequest, setDecodedForwardRequest] = useState(null)
+
+  const handleFetchTx = useCallback(async () => {
+    if (!w3 || !inspectTxHash || inspectTxHash.length < 10) {
+      addLog('❌ Valid tx hash required', 'error'); return
+    }
+    setFetchLoading(true); setFetchedTx(null)
+    addLog(`🔍 Fetching transaction: ${inspectTxHash.slice(0, 18)}...`, 'info')
+    try {
+      const tx = await w3.getTransaction(inspectTxHash)
+      if (!tx) {
+        addLog('❌ Transaction not found. Check the hash and chain.', 'error')
+        setFetchLoading(false); return
+      }
+      // Get receipt for status & logs
+      let receipt = null
+      try { receipt = await w3.getTransactionReceipt(inspectTxHash) } catch { /* not found */ }
+      setFetchedTx({
+        hash: tx.hash,
+        from: tx.from,
+        to: tx.to || null,
+        value: tx.value,
+        nonce: tx.nonce,
+        gasLimit: tx.gasLimit.toString(),
+        gasPrice: tx.gasPrice,
+        maxFeePerGas: tx.maxFeePerGas || null,
+        maxPriorityFeePerGas: tx.maxPriorityFeePerGas || null,
+        data: tx.data,
+        chainId: tx.chainId,
+        type: tx.type,
+        blockNumber: receipt?.blockNumber || tx.blockNumber || null,
+        confirmations: receipt ? 1 : 0,
+        status: receipt?.status || null,
+      })
+      addLog(`✅ Tx found! From: ${tx.from.slice(0, 10)}... → To: ${(tx.to || 'deploy').slice(0, 10)}... | Nonce: ${tx.nonce}`, 'success')
+
+      // Auto-try to decode calldata as ForwardRequest
+      if (tx.data && tx.data !== '0x') {
+        handleTryDecodeCalldata(tx.data)
+      }
+    } catch (err) {
+      addLog(`❌ Failed to fetch tx: ${err.message}`, 'error')
+    }
+    setFetchLoading(false)
+  }, [w3, inspectTxHash, addLog])
+
+  // ─── Raw Tx Inspector: Decode raw signed tx hex ───────────────────────
+  const handleDecodeRawTx = useCallback(() => {
+    if (!inspectRawHex || inspectRawHex.length < 20) {
+      addLog('❌ Valid raw tx hex required', 'error'); return
+    }
+    setDecodeLoading(true); setDecodedTx(null)
+    addLog('🔓 Decoding raw signed transaction...', 'info')
+    try {
+      const raw = inspectRawHex.startsWith('0x') ? inspectRawHex : '0x' + inspectRawHex
+      const tx = ethers.Transaction.from(raw)
+      setDecodedTx({
+        from: tx.from || 'Unknown (not signed)',
+        to: tx.to || null,
+        value: tx.value || 0n,
+        nonce: tx.nonce,
+        gasLimit: tx.gasLimit.toString(),
+        gasPrice: tx.gasPrice || null,
+        maxFeePerGas: tx.maxFeePerGas || null,
+        maxPriorityFeePerGas: tx.maxPriorityFeePerGas || null,
+        data: tx.data || '0x',
+        chainId: tx.chainId,
+        type: tx.type,
+        v: tx.v,
+        r: tx.r,
+        s: tx.s,
+      })
+      addLog(`✅ Decoded! From: ${(tx.from || 'unsigned').slice(0, 10)}... → To: ${(tx.to || 'deploy').slice(0, 10)}...`, 'success')
+
+      // Auto-try to decode calldata as ForwardRequest
+      if (tx.data && tx.data !== '0x') {
+        handleTryDecodeCalldata(tx.data)
+      }
+    } catch (err) {
+      addLog(`❌ Failed to decode: ${err.message}. Make sure it's a valid signed RLP-encoded transaction.`, 'error')
+    }
+    setDecodeLoading(false)
+  }, [inspectRawHex, addLog])
+
+  // ─── Try to decode calldata as a ForwardRequest ───────────────────────
+  const handleTryDecodeCalldata = useCallback((data) => {
+    if (!data || data === '0x' || data.length < 10) return
+    try {
+      // Check if it's an execute() call to TrustedForwarder
+      // execute((address,address,uint256,uint256,uint256,bytes,uint256),bytes)
+      const executeSelector = ethers.id('execute(tuple(address,address,uint256,uint256,uint256,bytes,uint256),bytes)').slice(0, 10)
+      const executeSelectorAlt = ethers.id('execute((address,address,uint256,uint256,uint256,bytes,uint256),bytes)').slice(0, 10)
+
+      const dataSelector = data.slice(0, 10).toLowerCase()
+      if (dataSelector !== executeSelector && dataSelector !== executeSelectorAlt) {
+        addLog('ℹ️ Calldata does not appear to be a Forwarder execute() call — showing raw data', 'info')
+        setDecodedForwardRequest(null)
+        return
+      }
+
+      // Try to decode using the forwarder ABI if we have the contract
+      if (forwarderContract) {
+        try {
+          const decoded = forwarderContract.interface.decodeFunctionData('execute', data)
+          const req = decoded.req || decoded[0]
+          if (req) {
+            setDecodedForwardRequest({
+              from: req.from,
+              to: req.to,
+              value: req.value?.toString() || '0',
+              gas: req.gas?.toString() || '0',
+              nonce: req.nonce?.toString() || '0',
+              data: req.data,
+              deadline: req.deadline?.toString() || '0',
+            })
+            addLog(`📄 Detected ForwardRequest! From: ${req.from.slice(0, 10)}... → To: ${req.to.slice(0, 10)}... | Nonce: ${req.nonce}`, 'success')
+            return
+          }
+        } catch { /* try manual decode below */ }
+      }
+
+      // Manual fallback: try to parse the tuple from raw calldata
+      // This is complex, so we just show the raw method ID
+      setDecodedForwardRequest(null)
+      addLog('ℹ️ Calldata has ForwardRequest signature but could not fully decode without ABI', 'warn')
+    } catch (err) {
+      addLog(`ℹ️ Could not decode calldata: ${err.message}`, 'info')
+      setDecodedForwardRequest(null)
+    }
+  }, [forwarderContract, addLog])
+
+  // ─── Use decoded request in the relay form ────────────────────────────
+  const handleUseDecodedRequest = useCallback(() => {
+    if (!decodedForwardRequest) return
+    setTargetContract(decodedForwardRequest.to)
+    setCallData(decodedForwardRequest.data)
+    addLog('📥 Filled target contract and calldata from decoded ForwardRequest', 'success')
+    // Set deadline to match
+    const decodedDeadline = parseInt(decodedForwardRequest.deadline)
+    if (decodedDeadline > Math.floor(Date.now() / 1000)) {
+      const minsLeft = Math.floor((decodedDeadline - Math.floor(Date.now() / 1000)) / 60)
+      setDeadlineMin(Math.max(1, minsLeft))
+    }
+    setDecodedForwardRequest(null)
+  }, [decodedForwardRequest])
+
   const handleVerify = useCallback(async () => {
     if (!forwarderContract || !walletAddress) { addLog('❌ Forwarder contract and wallet required', 'error'); return }
     addLog(`🔍 Checking ${walletAddress.slice(0, 10)}... on forwarder...`, 'info')
@@ -709,6 +889,199 @@ export default function GaslessRelay() {
             <li>Discovered nodes are automatically saved and will be available across sessions</li>
           </ul>
         </div>
+      </ConfigPanel>
+
+      {/* ═══ RAW TX INSPECTOR ════════════════════════════════════════════ */}
+      <ConfigPanel title="🔍 Raw Transaction Inspector" defaultOpen={false}>
+        <p style={{ fontSize: 12, color: '#888', marginBottom: 12 }}>
+          Fetch the raw details of a previously submitted transaction by tx hash, or decode a raw signed transaction hex.
+          Useful for debugging meta-transactions, verifying calldata, and inspecting gas usage.
+        </p>
+
+        {/* ── Fetch by Tx Hash ─────────────────────────────────────────── */}
+        <div style={{ marginBottom: 16 }}>
+          <h4 style={{ fontSize: 13, color: '#ccc', marginBottom: 8 }}>📥 Fetch by Transaction Hash</h4>
+          <div className="form-grid" style={{ gridTemplateColumns: '1fr auto' }}>
+            <div className="form-group">
+              <input
+                type="text" className="input mono" value={inspectTxHash}
+                onChange={e => setInspectTxHash(e.target.value)}
+                placeholder="0x... (paste a tx hash to inspect)"
+                style={{ fontSize: 12 }}
+              />
+            </div>
+            <div className="form-group" style={{ justifyContent: 'flex-end' }}>
+              <LoadingButton
+                loading={fetchLoading} loadingText="⏳"
+                onClick={handleFetchTx}
+                disabled={!w3 || !inspectTxHash || inspectTxHash.length < 10}
+                style={{ fontSize: 12, padding: '10px 18px', marginTop: 0 }}
+              >
+                🔍 Fetch Tx
+              </LoadingButton>
+            </div>
+          </div>
+        </div>
+
+        {/* ── Decode Raw Tx Hex ────────────────────────────────────────── */}
+        <div style={{ marginBottom: 16, borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: 16 }}>
+          <h4 style={{ fontSize: 13, color: '#ccc', marginBottom: 8 }}>🔓 Decode Raw Signed Transaction</h4>
+          <div className="form-grid" style={{ gridTemplateColumns: '1fr auto' }}>
+            <div className="form-group">
+              <input
+                type="text" className="input mono" value={inspectRawHex}
+                onChange={e => setInspectRawHex(e.target.value)}
+                placeholder="0x... (paste a raw signed tx hex to decode)"
+                style={{ fontSize: 12 }}
+              />
+            </div>
+            <div className="form-group" style={{ justifyContent: 'flex-end' }}>
+              <LoadingButton
+                loading={decodeLoading} loadingText="⏳"
+                onClick={handleDecodeRawTx}
+                disabled={!inspectRawHex || inspectRawHex.length < 20}
+                style={{ fontSize: 12, padding: '10px 18px', marginTop: 0 }}
+              >
+                🔓 Decode
+              </LoadingButton>
+            </div>
+          </div>
+        </div>
+
+        {/* ── Fetched Tx Result ────────────────────────────────────────── */}
+        {fetchedTx && (
+          <div className="result-panel success" style={{
+            borderColor: 'rgba(59,130,246,0.3)',
+            background: 'rgba(59,130,246,0.05)',
+            marginBottom: 12,
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+              <h4 style={{ margin: 0, fontSize: 13, color: '#60a5fa' }}>📋 Fetched Transaction</h4>
+              <button className="btn btn-secondary" onClick={() => setFetchedTx(null)} style={{ fontSize: 10, padding: '3px 8px' }}>✕ Dismiss</button>
+            </div>
+            <div className="result-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
+              <TxField label="Hash" value={fetchedTx.hash} mono copy />
+              <TxField label="Block" value={String(fetchedTx.blockNumber || '—')} />
+              <TxField label="From" value={fetchedTx.from} mono copy />
+              <TxField label="To" value={fetchedTx.to || '— (contract creation)'} mono copy />
+              <TxField label="Value" value={ethers.formatEther(fetchedTx.value || 0n) + ' ETH'} />
+              <TxField label="Nonce" value={String(fetchedTx.nonce)} />
+              <TxField label="Gas Limit" value={String(fetchedTx.gasLimit)} />
+              <TxField label="Gas Price" value={fetchedTx.gasPrice ? ethers.formatUnits(fetchedTx.gasPrice, 'gwei') + ' gwei' : '—'} />
+              {fetchedTx.maxFeePerGas && <TxField label="Max Fee" value={ethers.formatUnits(fetchedTx.maxFeePerGas, 'gwei') + ' gwei'} />}
+              {fetchedTx.maxPriorityFeePerGas && <TxField label="Max Priority" value={ethers.formatUnits(fetchedTx.maxPriorityFeePerGas, 'gwei') + ' gwei'} />}
+              <TxField label="Chain ID" value={String(fetchedTx.chainId)} />
+              <TxField label="Type" value={String(fetchedTx.type || 0)} />
+            </div>
+
+            {/* Calldata section */}
+            <div style={{ marginTop: 10 }}>
+              <label style={{ fontSize: 11, color: '#888', display: 'block', marginBottom: 4, fontWeight: 600 }}>Calldata</label>
+              <div className="tx-call-data" style={{
+                background: 'rgba(0,0,0,0.2)', borderRadius: 6, padding: '8px 10px',
+                fontFamily: 'monospace', fontSize: 11, wordBreak: 'break-all',
+                maxHeight: 100, overflowY: 'auto', color: '#aaa', border: '1px solid rgba(255,255,255,0.04)',
+              }}>
+                {fetchedTx.data || '0x'}
+              </div>
+              {fetchedTx.data && fetchedTx.data !== '0x' && (
+                <div style={{ marginTop: 6, display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <button className="btn btn-secondary" onClick={() => navigator.clipboard.writeText(fetchedTx.data)} style={{ fontSize: 10, padding: '3px 10px' }}>📋 Copy Calldata</button>
+                  <button className="btn btn-secondary" onClick={() => handleTryDecodeCalldata(fetchedTx.data)} style={{ fontSize: 10, padding: '3px 10px' }}>🔍 Try Decode</button>
+                  <span style={{ fontSize: 10, color: '#666' }}>Method ID: {fetchedTx.data?.slice(0, 10)}</span>
+                </div>
+              )}
+            </div>
+
+            {/* Receipt info if available */}
+            {fetchedTx.confirmations > 0 && (
+              <div style={{ marginTop: 10, fontSize: 11, color: '#22c55e', display: 'flex', gap: 16 }}>
+                <span>✅ {fetchedTx.confirmations} confirmation(s)</span>
+                <a href={`https://etherscan.io/tx/${fetchedTx.hash}`} target="_blank" rel="noreferrer" style={{ color: '#60a5fa' }}>View on Etherscan ↗</a>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── Decoded Raw Tx Result ────────────────────────────────────── */}
+        {decodedTx && (
+          <div className="result-panel success" style={{
+            borderColor: 'rgba(168,85,247,0.3)',
+            background: 'rgba(168,85,247,0.05)',
+            marginBottom: 12,
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+              <h4 style={{ margin: 0, fontSize: 13, color: '#a78bfa' }}>🔓 Decoded Raw Transaction</h4>
+              <button className="btn btn-secondary" onClick={() => setDecodedTx(null)} style={{ fontSize: 10, padding: '3px 8px' }}>✕ Dismiss</button>
+            </div>
+            <div className="result-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
+              <TxField label="From" value={decodedTx.from} mono copy />
+              <TxField label="To" value={decodedTx.to || '— (contract creation)'} mono copy />
+              <TxField label="Value" value={ethers.formatEther(decodedTx.value || 0n) + ' ETH'} />
+              <TxField label="Nonce" value={String(decodedTx.nonce)} />
+              <TxField label="Gas Limit" value={String(decodedTx.gasLimit)} />
+              <TxField label="Gas Price" value={decodedTx.gasPrice ? ethers.formatUnits(decodedTx.gasPrice, 'gwei') + ' gwei' : '—'} />
+              {decodedTx.chainId && <TxField label="Chain ID" value={String(decodedTx.chainId)} />}
+              <TxField label="Type" value={String(decodedTx.type || 0)} />
+            </div>
+
+            {/* Decoded calldata section */}
+            <div style={{ marginTop: 10 }}>
+              <label style={{ fontSize: 11, color: '#888', display: 'block', marginBottom: 4, fontWeight: 600 }}>Calldata</label>
+              <div className="tx-call-data" style={{
+                background: 'rgba(0,0,0,0.2)', borderRadius: 6, padding: '8px 10px',
+                fontFamily: 'monospace', fontSize: 11, wordBreak: 'break-all',
+                maxHeight: 100, overflowY: 'auto', color: '#aaa', border: '1px solid rgba(255,255,255,0.04)',
+              }}>
+                {decodedTx.data || '0x'}
+              </div>
+              {decodedTx.data && decodedTx.data !== '0x' && (
+                <div style={{ marginTop: 6, display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <button className="btn btn-secondary" onClick={() => navigator.clipboard.writeText(decodedTx.data)} style={{ fontSize: 10, padding: '3px 10px' }}>📋 Copy Calldata</button>
+                  <button className="btn btn-secondary" onClick={() => handleTryDecodeCalldata(decodedTx.data)} style={{ fontSize: 10, padding: '3px 10px' }}>🔍 Try Decode</button>
+                  <span style={{ fontSize: 10, color: '#666' }}>Method ID: {decodedTx.data?.slice(0, 10)}</span>
+                </div>
+              )}
+            </div>
+
+            {/* Signature section */}
+            {decodedTx.from && (
+              <div style={{ marginTop: 10, fontSize: 11, color: '#888' }}>
+                <span>🔏 Signed by: {decodedTx.from.slice(0, 10)}...{decodedTx.from.slice(-6)}</span>
+                {decodedTx.v !== undefined && (
+                  <span style={{ marginLeft: 12 }}>v: {decodedTx.v} | r: {decodedTx.r?.slice(0, 18)}... | s: {decodedTx.s?.slice(0, 18)}...</span>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── Decoded ForwardRequest (if calldata matches) ─────────────── */}
+        {decodedForwardRequest && (
+          <div className="result-panel" style={{
+            borderColor: 'rgba(34,197,94,0.3)',
+            background: 'rgba(34,197,94,0.04)',
+          }}>
+            <h4 style={{ margin: '0 0 8px', fontSize: 13, color: '#22c55e' }}>📄 Detected EIP-712 ForwardRequest</h4>
+            <p style={{ fontSize: 11, color: '#888', marginBottom: 8 }}>
+              The calldata appears to be an <code>execute()</code> call to a TrustedForwarder.
+              Here's the decoded ForwardRequest struct:
+            </p>
+            <div className="result-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
+              <TxField label="From (signer)" value={decodedForwardRequest.from} mono copy />
+              <TxField label="To (target)" value={decodedForwardRequest.to} mono copy />
+              <TxField label="Value" value={String(decodedForwardRequest.value)} />
+              <TxField label="Gas" value={String(decodedForwardRequest.gas)} />
+              <TxField label="Nonce" value={String(decodedForwardRequest.nonce)} />
+              <TxField label="Deadline" value={new Date(Number(decodedForwardRequest.deadline) * 1000).toLocaleString()} />
+              <span></span>
+              <div style={{ display: 'flex', gap: 4 }}>
+                <button className="btn btn-secondary" onClick={() => navigator.clipboard.writeText(JSON.stringify(decodedForwardRequest, null, 2))} style={{ fontSize: 10, padding: '3px 10px' }}>📋 Copy Request</button>
+                <button className="btn btn-success" onClick={handleUseDecodedRequest} style={{ fontSize: 10, padding: '3px 10px' }}>📥 Use in Relay</button>
+              </div>
+            </div>
+          </div>
+        )}
       </ConfigPanel>
 
       <LogPanel logs={logs} title="📋 Activity Log" />

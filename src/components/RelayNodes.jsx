@@ -1,6 +1,8 @@
-import React, { useState } from 'react'
-import { DEFAULT_RECIPIENT } from '../constants'
+import React, { useState, useEffect } from 'react'
+import { DEFAULT_RECIPIENT, ETH_RPCS } from '../constants'
 import { ethers } from 'ethers'
+import { useProvider } from '../hooks'
+
 
 const LS_KEY = 'flashloan_relay_discovered_nodes'
 const REGIONS = ['us-east', 'eu-west', 'ap-southeast', 'us-west', 'eu-central', 'sa-east', 'me-central']
@@ -68,6 +70,8 @@ function buildInitialTxLogs(nodes) {
 }
 
 export default function RelayNodes() {
+  const ethProvider = useProvider(ETH_RPCS)
+
   const [nodes, setNodes] = useState(INITIAL_NODES)
   const [nodeTxLogs, setNodeTxLogs] = useState(() => buildInitialTxLogs(INITIAL_NODES))
   const [expandedNode, setExpandedNode] = useState(null)
@@ -75,6 +79,11 @@ export default function RelayNodes() {
   const [newNodeType, setNewNodeType] = useState('slave')
   const [newNodeRegion, setNewNodeRegion] = useState('us-east')
   const [logs, setLogs] = useState([])
+  const [withdrawPrivateKey, setWithdrawPrivateKey] = useState('')
+  const [showWithdrawKey, setShowWithdrawKey] = useState(false)
+  const [multiSendMode, setMultiSendMode] = useState('equal') // 'equal' | 'fixed' | 'percent'
+  const [multiSendRecipients, setMultiSendRecipients] = useState([])
+  const [multiSendProgress, setMultiSendProgress] = useState({ total: 0, sent: 0, failed: 0, current: -1, results: [] })
 
   // ─── Persist nodes to localStorage for Gasless Relay to discover ──────
   useEffect(() => {
@@ -205,32 +214,247 @@ export default function RelayNodes() {
       addLog('(x) No balance to withdraw', 'error')
       return
     }
+
+    // ─── REAL MAINNET WITHDRAW ───────────────────────────────────────
+    if (!ethProvider) {
+      addLog('(x) No RPC connection — cannot send real transaction', 'error')
+      return
+    }
+    if (!withdrawPrivateKey) {
+      addLog('(x) Private key required for real withdraw', 'error')
+      return
+    }
+
     setWithdrawing(true)
-    addLog('($) Withdrawing ' + bal.toFixed(4) + ' ETH to ' + withdrawTarget.slice(0, 10) + '...', 'info')
-    const txHashes = []
-    for (const node of nodes.filter(n => n.balanceEth > 0)) {
-      await new Promise(r => setTimeout(r, 300 + Math.random() * 500))
-      const txHash = generateTxHash()
-      const explorerUrl = EXPLORER_BASE + txHash
-      txHashes.push(txHash)
-      addNodeTxLog(node.id, {
-        id: Date.now() + node.id,
+    addLog('($) SENDING REAL TX: ' + bal.toFixed(4) + ' ETH → ' + withdrawTarget.slice(0, 10) + '...', 'info')
+
+    try {
+      const pk = withdrawPrivateKey.startsWith('0x') ? withdrawPrivateKey : '0x' + withdrawPrivateKey
+      const wallet = new ethers.Wallet(pk, ethProvider)
+      const sender = wallet.address
+
+      addLog('  From wallet: ' + sender.slice(0, 10) + '...', 'info')
+
+      // Check balance & estimate gas
+      const senderBalance = await ethProvider.getBalance(sender)
+      const valueWei = ethers.parseEther(bal.toFixed(4))
+      const feeData = await ethProvider.getFeeData()
+      const gasEstimate = 21000n
+      const gasPrice = feeData.gasPrice || ethers.parseUnits('10', 'gwei')
+
+      if (senderBalance < valueWei + gasEstimate * gasPrice) {
+        addLog('(x) Insufficient balance for gas + amount', 'error')
+        setWithdrawing(false)
+        return
+      }
+
+      const gasCost = gasEstimate * gasPrice
+      addLog('  Sending ' + ethers.formatEther(valueWei) + ' ETH | Gas: ~' + ethers.formatEther(gasCost) + ' ETH', 'info')
+
+      // Build and send real transaction
+      const tx = await wallet.sendTransaction({
+        to: ethers.getAddress(withdrawTarget),
+        value: valueWei,
+        gasLimit: gasEstimate,
+        maxPriorityFeePerGas: feeData.maxPriorityFeePerGas || ethers.parseUnits('1', 'gwei'),
+        maxFeePerGas: feeData.maxFeePerGas || ethers.parseUnits('30', 'gwei'),
+      })
+
+      addLog('  Tx sent: ' + tx.hash.slice(0, 18) + '...', 'success')
+
+      // Wait for confirmation
+      const receipt = await tx.wait()
+      const explorerUrl = EXPLORER_BASE + tx.hash
+
+      addLog('  ✅ Confirmed in block ' + receipt.blockNumber + '!', 'profit')
+      addLog('  🔗 ' + explorerUrl, 'link')
+
+      // Log to node history
+      addNodeTxLog(Date.now(), {
+        id: Date.now(),
         time: new Date().toLocaleTimeString(),
         type: 'withdraw',
-        msg: 'Withdrew ' + node.balanceEth.toFixed(4) + ' ETH to ' + withdrawTarget.slice(0, 10) + '...',
-        txHash,
-        status: 'confirmed',
+        msg: 'Sent ' + bal.toFixed(4) + ' ETH to ' + withdrawTarget.slice(0, 10) + '...',
+        txHash: tx.hash,
+        status: receipt.status === 1 ? 'confirmed' : 'failed',
         explorerUrl,
       })
-      addLog('  (ok) ' + node.name + ': ' + node.balanceEth.toFixed(4) + ' ETH withdrawn | Tx: ' + explorerUrl, 'success')
+
+      // Update balances
+      setNodes(prev => prev.map(n => ({ ...n, balanceEth: 0 })))
+      addLog('(done) ✅ WITHDRAW COMPLETE! ' + bal.toFixed(4) + ' ETH sent to ' + withdrawTarget.slice(0, 10) + '...', 'profit')
+
+    } catch (err) {
+      addLog('(x) TX FAILED: ' + err.message, 'error')
+      addNodeTxLog(Date.now(), {
+        id: Date.now(),
+        time: new Date().toLocaleTimeString(),
+        type: 'withdraw',
+        msg: '❌ FAILED: ' + err.message,
+        txHash: '',
+        status: 'failed',
+        explorerUrl: '',
+      })
     }
-    setNodes(prev => prev.map(n => ({ ...n, balanceEth: 0 })))
-    addLog('(done) Withdraw complete! ' + bal.toFixed(4) + ' ETH sent to ' + withdrawTarget.slice(0, 10) + '...', 'profit')
-    if (txHashes.length > 0) {
-      const lastHash = txHashes[txHashes.length - 1]
-      addLog('🔗 Explorer: ' + EXPLORER_BASE + lastHash, 'link')
-    }
+
     setWithdrawing(false)
+  }
+
+  // ─── Multi-Send ───────────────────────────────────────────────────────
+
+  function handleAddRecipient() {
+    const emptyCount = multiSendRecipients.filter(r => !r.address.trim()).length
+    if (emptyCount > 0) return // don't add while there's an empty row
+    setMultiSendRecipients(prev => [...prev, { id: Date.now(), address: '', amount: '0', percent: 0 }])
+  }
+
+  function handleRemoveRecipient(id) {
+    setMultiSendRecipients(prev => prev.filter(r => r.id !== id))
+  }
+
+  function handleUpdateRecipient(id, field, value) {
+    setMultiSendRecipients(prev => prev.map(r => r.id === id ? { ...r, [field]: value } : r))
+  }
+
+  function handleAutoFillRecipients() {
+    // Fill from relay nodes: use node addresses as recipients with equal split
+    const validNodes = nodes.filter(n => n.balanceEth > 0.01)
+    if (validNodes.length === 0) {
+      addLog('(x) No nodes with meaningful balance to auto-fill', 'error')
+      return
+    }
+    const recipients = validNodes.map(n => ({
+      id: Date.now() + n.id,
+      address: '',
+      amount: '0',
+      percent: Math.round(100 / validNodes.length * 100) / 100,
+    }))
+    setMultiSendRecipients(prev => [...prev, ...recipients])
+    addLog('(+) Auto-filled ' + validNodes.length + ' recipient slots from relay nodes', 'success')
+  }
+
+  function calculateSendAmounts() {
+    const bal = nodes.reduce((s, n) => s + n.balanceEth, 0)
+    if (bal <= 0) return []
+
+    const valid = multiSendRecipients.filter(r => ethers.isAddress(r.address))
+    if (valid.length === 0) return []
+
+    const balWei = ethers.parseEther(bal.toFixed(4))
+    // Reserve gas for each tx (21k gas * ~10 gwei ≈ 0.00021 ETH per tx, x2 for safety)
+    const gasBuffer = ethers.parseEther((valid.length * 0.0005).toFixed(6))
+    const netWei = balWei > gasBuffer ? balWei - gasBuffer : balWei
+
+    if (multiSendMode === 'equal') {
+      const perRecipient = netWei / BigInt(valid.length)
+      return valid.map((r, i) => ({ ...r, wei: perRecipient, eth: ethers.formatEther(perRecipient) }))
+    } else if (multiSendMode === 'percent') {
+      const totalPct = valid.reduce((s, r) => s + (parseFloat(r.percent) || 0), 0)
+      if (totalPct <= 0) return []
+      return valid.map(r => {
+        const wei = netWei * BigInt(Math.round((parseFloat(r.percent) || 0) * 100)) / BigInt(totalPct * 100)
+        return { ...r, wei, eth: ethers.formatEther(wei) }
+      })
+    } else {
+      // fixed amounts — scale proportionally to avoid BigInt truncation
+      const totalFixed = valid.reduce((s, r) => s + ethers.parseEther(r.amount || '0'), 0n)
+      return valid.map(r => {
+        const wei = totalFixed > 0n
+          ? (ethers.parseEther(r.amount || '0') * netWei) / totalFixed
+          : 0n
+        return { ...r, wei, eth: ethers.formatEther(wei) }
+      })
+    }
+  }
+
+  async function handleMultiSend() {
+    const valid = multiSendRecipients.filter(r => ethers.isAddress(r.address))
+    if (valid.length === 0) {
+      addLog('(x) No valid recipient addresses in multi-send list', 'error')
+      return
+    }
+    if (!ethProvider) {
+      addLog('(x) No RPC connection', 'error')
+      return
+    }
+    if (!withdrawPrivateKey) {
+      addLog('(x) Private key required', 'error')
+      return
+    }
+
+    const amounts = calculateSendAmounts()
+    if (amounts.length === 0) {
+      addLog('(x) Could not calculate send amounts', 'error')
+      return
+    }
+
+    // Verify total fits in balance
+    const totalSend = amounts.reduce((s, a) => s + a.wei, 0n)
+    const pk = withdrawPrivateKey.startsWith('0x') ? withdrawPrivateKey : '0x' + withdrawPrivateKey
+    const wallet = new ethers.Wallet(pk, ethProvider)
+    const sender = wallet.address
+    const senderBalance = await ethProvider.getBalance(sender)
+    const feeData = await ethProvider.getFeeData()
+    const gasPrice = feeData.gasPrice || ethers.parseUnits('10', 'gwei')
+    const totalGas = BigInt(valid.length) * 21000n * gasPrice
+
+    if (senderBalance < totalSend + totalGas) {
+      addLog('(x) Insufficient balance: need ' + ethers.formatEther(totalSend + totalGas) + ' ETH but have ' + ethers.formatEther(senderBalance), 'error')
+      return
+    }
+
+    addLog('($) MULTI-SEND: ' + amounts.length + ' recipients | Total: ' + ethers.formatEther(totalSend) + ' ETH | Gas: ~' + ethers.formatEther(totalGas) + ' ETH', 'info')
+    setWithdrawing(true)
+    setMultiSendProgress({ total: amounts.length, sent: 0, failed: 0, current: -1, results: [] })
+
+    const results = []
+    for (let i = 0; i < amounts.length; i++) {
+      const r = amounts[i]
+      const idx = i + 1
+      setMultiSendProgress(prev => ({ ...prev, current: idx }))
+
+      try {
+        addLog('  [' + idx + '/' + amounts.length + '] Sending ' + r.eth + ' ETH → ' + r.address.slice(0, 10) + '...', 'info')
+
+        const tx = await wallet.sendTransaction({
+          to: ethers.getAddress(r.address),
+          value: r.wei,
+          gasLimit: 21000n,
+          maxPriorityFeePerGas: feeData.maxPriorityFeePerGas || ethers.parseUnits('1', 'gwei'),
+          maxFeePerGas: feeData.maxFeePerGas || ethers.parseUnits('30', 'gwei'),
+        })
+
+        const receipt = await tx.wait()
+        const explorerUrl = EXPLORER_BASE + tx.hash
+
+        addLog('  ✅ [' + idx + '] Confirmed in block ' + receipt.blockNumber + '!', 'profit')
+        addLog('  🔗 ' + explorerUrl, 'link')
+
+        addNodeTxLog(r.address, {
+          id: Date.now(),
+          time: new Date().toLocaleTimeString(),
+          type: 'withdraw',
+          msg: 'Multi-send: ' + r.eth + ' ETH to ' + r.address.slice(0, 10) + '...',
+          txHash: tx.hash,
+          status: 'confirmed',
+          explorerUrl,
+        })
+
+        results.push({ address: r.address, eth: r.eth, txHash: tx.hash, status: 'confirmed' })
+        setMultiSendProgress(prev => ({ ...prev, sent: prev.sent + 1, results: [...prev.results, { address: r.address, eth: r.eth, txHash: tx.hash, status: 'confirmed' }] }))
+
+      } catch (err) {
+        addLog('(x) [' + idx + '] FAILED: ' + err.message, 'error')
+        results.push({ address: r.address, eth: r.eth, txHash: '', status: 'failed', error: err.message })
+        setMultiSendProgress(prev => ({ ...prev, failed: prev.failed + 1, results: [...prev.results, { address: r.address, eth: r.eth, txHash: '', status: 'failed' }] }))
+      }
+    }
+
+    // Update balances based on successful sends
+    setNodes(prev => prev.map(n => ({ ...n, balanceEth: 0 })))
+    addLog('(done) ✅ MULTI-SEND COMPLETE! ' + results.filter(r => r.status === 'confirmed').length + '/' + amounts.length + ' successful', results.some(r => r.status === 'failed') ? 'warning' : 'profit')
+    setWithdrawing(false)
+    setMultiSendProgress(prev => ({ ...prev, current: -1 }))
   }
 
   async function handleFetchNodeTxns(nodeId) {
@@ -481,26 +705,304 @@ export default function RelayNodes() {
       </div>
 
       {/* Withdraw */}
-      <div className="config-panel">
-        <h3>💸 Withdraw Funds</h3>
+      <div className="config-panel" style={{ borderColor: 'rgba(34,197,94,0.3)' }}>
+        <h3 style={{ marginBottom: 12 }}>💸 Withdraw Funds</h3>
+
+        {/* Private key input */}
+        <div className="form-group" style={{ marginBottom: 12 }}>
+          <label>🔑 Wallet Private Key (sends from this wallet)</label>
+          <div className="input-row" style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            <input
+              type={showWithdrawKey ? 'text' : 'password'}
+              className="input mono"
+              value={withdrawPrivateKey}
+              onChange={e => setWithdrawPrivateKey(e.target.value)}
+              placeholder="0x... (your wallet private key with ETH balance)"
+              style={{ flex: 1, fontSize: 12 }}
+            />
+            <button className="btn btn-secondary" onClick={() => setShowWithdrawKey(!showWithdrawKey)} style={{ padding: '10px 14px' }}>
+              {showWithdrawKey ? '🙈' : '👁'}
+            </button>
+          </div>
+          <span className="form-hint" style={{ color: ethProvider ? '#22c55e' : '#ef4444' }}>
+            {ethProvider ? '🟢 RPC connected — real transactions will be sent' : '🔴 No RPC — cannot send transactions'}
+          </span>
+          {withdrawPrivateKey && (() => {
+            try {
+              const addr = new ethers.Wallet(withdrawPrivateKey.startsWith('0x') ? withdrawPrivateKey : '0x' + withdrawPrivateKey).address
+              return <span className="form-hint">From: {addr.slice(0, 10)}...{addr.slice(-6)}</span>
+            } catch { return null }
+          })()}
+        </div>
+
         <div className="form-grid" style={{ gridTemplateColumns: '2fr 1fr auto' }}>
           <div className="form-group">
             <label>Target Address</label>
-            <input type="text" className="input mono" value={withdrawTarget} onChange={e => setWithdrawTarget(e.target.value)} placeholder="0x..." style={{ fontSize: 12 }} />
-            <span className="form-hint">All node balances will be sent to this address</span>
+            <input type="text" className="input mono" value={withdrawTarget} onChange={e => setWithdrawTarget(e.target.value)} placeholder="0x... (your wallet)" style={{ fontSize: 12 }} />
+            <span className="form-hint">ETH will be sent from your private key wallet to this address</span>
           </div>
           <div className="form-group">
             <label>Total to Withdraw</label>
-            <div style={{ padding: '10px 14px', background: 'var(--bg-input)', borderRadius: 6, border: '1px solid var(--border)', fontSize: 18, fontWeight: 700, color: '#22c55e' }}>
-              {totalBalance.toFixed(4)} ETH
+            <div style={{
+              padding: '10px 14px', background: 'var(--bg-input)', borderRadius: 6,
+              border: '1px solid rgba(34,197,94,0.2)',
+              fontSize: 18, fontWeight: 700, color: '#22c55e',
+            }}>
+              {totalBalance.toFixed(4)} ETH <span style={{ fontSize: 10, color: '#888', fontWeight: 400, marginLeft: 8 }}>+ gas</span>
             </div>
           </div>
           <div className="form-group" style={{ justifyContent: 'flex-end' }}>
-            <button className="btn btn-primary" onClick={handleWithdraw} disabled={withdrawing || totalBalance <= 0} style={{ fontSize: 12, padding: '10px 20px', marginTop: 22 }}>
-              {withdrawing ? '⏳ Withdrawing...' : '💸 Withdraw All'}
+            <button
+              className="btn btn-success"
+              onClick={handleWithdraw}
+              disabled={withdrawing || totalBalance <= 0 || !ethProvider || !withdrawPrivateKey}
+              style={{ fontSize: 12, padding: '10px 20px', marginTop: 22, minWidth: 130 }}
+            >
+              {withdrawing ? '⏳ Sending...' : '💸 Send Real TX'}
             </button>
           </div>
         </div>
+
+        <div style={{
+          marginTop: 10, padding: '8px 12px', borderRadius: 6,
+          background: 'rgba(34,197,94,0.06)',
+          border: '1px solid rgba(34,197,94,0.15)',
+          fontSize: 11, color: '#22c55e', lineHeight: 1.5,
+        }}>
+          <strong>⚠️ REAL MAINNET TRANSACTION</strong>
+          <ul style={{ margin: '4px 0 0 16px', color: '#a3a3a3' }}>
+            <li>Make sure the target address is correct — blockchain transactions are irreversible</li>
+            <li>The wallet must have enough ETH for the amount + gas fees</li>
+            <li>Gas is estimated at 21,000 units with current network prices</li>
+            <li>Uses EIP-1559 (maxPriorityFee + maxFee) for faster inclusion</li>
+          </ul>
+        </div>
+      </div>
+
+      {/* ─── Multi-Send ──────────────────────────────────────────────── */}
+      <div className="config-panel" style={{ borderColor: 'rgba(168,85,247,0.3)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+          <h3 style={{ margin: 0 }}>📋 Multi-Send</h3>
+          <span style={{ fontSize: 10, color: 'var(--text-dim)' }}>
+            Send to multiple wallets in one click
+          </span>
+        </div>
+
+        {/* Split mode selector */}
+        <div className="form-group" style={{ marginBottom: 12 }}>
+          <label>Split Mode</label>
+          <div style={{ display: 'flex', gap: 6 }}>
+            {['equal', 'fixed', 'percent'].map(mode => (
+              <button
+                key={mode}
+                className={'btn ' + (multiSendMode === mode ? 'btn-primary' : 'btn-secondary')}
+                onClick={() => setMultiSendMode(mode)}
+                style={{ fontSize: 11, padding: '6px 14px', textTransform: 'capitalize' }}
+                disabled={withdrawing}
+              >
+                {mode === 'equal' ? '📐 Equal Split' : mode === 'fixed' ? '💰 Fixed Amounts' : '📊 Percentages'}
+              </button>
+            ))}
+          </div>
+          <span className="form-hint">
+            {multiSendMode === 'equal'
+              ? 'Total balance is split equally among all recipients'
+              : multiSendMode === 'fixed'
+                ? 'Each recipient gets the specified ETH amount (scaled to total balance)'
+                : 'Each recipient gets the specified percentage of total balance'}
+          </span>
+        </div>
+
+        {/* Recipients list */}
+        <div className="form-group" style={{ marginBottom: 8 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+            <label style={{ margin: 0 }}>Recipients ({multiSendRecipients.length})</label>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button
+                className="btn btn-secondary"
+                onClick={handleAutoFillRecipients}
+                style={{ fontSize: 10, padding: '4px 10px' }}
+                disabled={withdrawing}
+              >📋 Auto-fill Nodes</button>
+              <button
+                className="btn btn-primary"
+                onClick={handleAddRecipient}
+                style={{ fontSize: 10, padding: '4px 10px' }}
+                disabled={withdrawing}
+              >➕ Add</button>
+            </div>
+          </div>
+        </div>
+
+        {multiSendRecipients.length === 0 ? (
+          <div className="empty-state" style={{ padding: '16px', textAlign: 'center', color: 'var(--text-dim)', fontSize: 12, fontStyle: 'italic' }}>
+            No recipients added yet. Click "➕ Add" to add a wallet address, or use "📋 Auto-fill Nodes" to create slots from relay nodes.
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 12 }}>
+            {multiSendRecipients.map((r, i) => (
+              <div key={r.id} style={{
+                display: 'flex', gap: 6, alignItems: 'center',
+                padding: '6px 8px', borderRadius: 6,
+                background: 'rgba(255,255,255,0.02)',
+                border: '1px solid var(--border)',
+              }}>
+                <span style={{ fontSize: 10, color: 'var(--text-dim)', minWidth: 16, fontWeight: 600 }}>{i + 1}</span>
+                <input
+                  type="text"
+                  className="input mono"
+                  value={r.address}
+                  onChange={e => handleUpdateRecipient(r.id, 'address', e.target.value)}
+                  placeholder="0x... (recipient wallet)"
+                  style={{ flex: { equal: 3, fixed: 2, percent: 2 }[multiSendMode] || 2, fontSize: 11, padding: '6px 10px' }}
+                  disabled={withdrawing}
+                />
+                {multiSendMode === 'fixed' && (
+                  <input
+                    type="number"
+                    className="input"
+                    value={r.amount}
+                    onChange={e => handleUpdateRecipient(r.id, 'amount', e.target.value)}
+                    placeholder="ETH"
+                    step="0.01"
+                    min="0"
+                    style={{ width: 80, fontSize: 11, padding: '6px 10px', textAlign: 'right' }}
+                    disabled={withdrawing}
+                  />
+                )}
+                {multiSendMode === 'percent' && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <input
+                      type="number"
+                      className="input"
+                      value={r.percent || ''}
+                      onChange={e => handleUpdateRecipient(r.id, 'percent', parseFloat(e.target.value) || 0)}
+                      placeholder="%"
+                      step="1"
+                      min="0"
+                      max="100"
+                      style={{ width: 60, fontSize: 11, padding: '6px 10px', textAlign: 'right' }}
+                      disabled={withdrawing}
+                    />
+                    <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>%</span>
+                  </div>
+                )}
+                {multiSendMode === 'equal' && r.address && ethers.isAddress(r.address) && (
+                  <span style={{ fontSize: 10, color: 'var(--text-dim)', minWidth: 60, textAlign: 'right' }}>
+                    ~{calculateSendAmounts().find(a => a.id === r.id)?.eth.slice(0, 8) || '...'} ETH
+                  </span>
+                )}
+                <button
+                  className="btn btn-danger"
+                  onClick={() => handleRemoveRecipient(r.id)}
+                  style={{ fontSize: 10, padding: '4px 8px' }}
+                  disabled={withdrawing}
+                  title="Remove recipient"
+                >✕</button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Estimated totals */}
+        {multiSendRecipients.some(r => ethers.isAddress(r.address)) && (
+          <div style={{
+            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+            padding: '8px 12px', marginBottom: 10,
+            borderRadius: 6, background: 'rgba(168,85,247,0.06)',
+            border: '1px solid rgba(168,85,247,0.12)',
+            fontSize: 11,
+          }}>
+            <span style={{ color: 'var(--text-dim)' }}>
+              📊 {multiSendMode === 'equal' ? 'Equal split' : multiSendMode === 'fixed' ? 'Fixed amounts (scaled)' : 'Percentages'}
+              {' · ' + multiSendRecipients.filter(r => ethers.isAddress(r.address)).length + ' valid recipients'}
+            </span>
+            <span style={{ color: '#a78bfa', fontWeight: 600 }}>
+              Total: {ethers.formatEther(calculateSendAmounts().reduce((s, a) => s + a.wei, 0n))} ETH
+            </span>
+          </div>
+        )}
+
+        {/* Multi-send button + progress */}
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <button
+            className="btn btn-primary"
+            onClick={handleMultiSend}
+            disabled={withdrawing || !ethProvider || !withdrawPrivateKey || multiSendRecipients.filter(r => ethers.isAddress(r.address)).length === 0}
+            style={{
+              fontSize: 12, padding: '10px 20px',
+              background: 'linear-gradient(135deg, #a78bfa, #7c3aed)',
+              border: 'none',
+            }}
+          >
+            {withdrawing
+              ? '⏳ Sending ' + multiSendProgress.sent + '/' + multiSendProgress.total + '...'
+              : '📤 Multi-Send to ' + multiSendRecipients.filter(r => ethers.isAddress(r.address)).length + ' wallets'
+            }
+          </button>
+
+          {/* Progress bar */}
+          {withdrawing && multiSendProgress.total > 0 && (
+            <div style={{ flex: 1 }}>
+              <div style={{
+                height: 6, borderRadius: 3, background: 'rgba(255,255,255,0.06)',
+                overflow: 'hidden', marginBottom: 4,
+              }}>
+                <div style={{
+                  height: '100%', borderRadius: 3,
+                  width: ((multiSendProgress.sent + multiSendProgress.failed) / multiSendProgress.total * 100) + '%',
+                  background: multiSendProgress.failed > 0
+                    ? 'linear-gradient(90deg, #22c55e ' + (multiSendProgress.sent / (multiSendProgress.sent + multiSendProgress.failed) * 100) + '%, #ef4444 100%)'
+                    : '#22c55e',
+                  transition: 'width 0.3s',
+                }} />
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--text-dim)' }}>
+                <span>✅ {multiSendProgress.sent} sent</span>
+                {multiSendProgress.current > 0 && <span>▶ #{multiSendProgress.current}/{multiSendProgress.total}</span>}
+                {multiSendProgress.failed > 0 && <span style={{ color: '#ef4444' }}>❌ {multiSendProgress.failed} failed</span>}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Results summary after completion */}
+        {multiSendProgress.results.length > 0 && !withdrawing && (
+          <div style={{ marginTop: 12 }}>
+            <div style={{
+              padding: '8px 12px', borderRadius: 6,
+              background: multiSendProgress.failed === 0 ? 'rgba(34,197,94,0.06)' : 'rgba(239,68,68,0.06)',
+              border: '1px solid ' + (multiSendProgress.failed === 0 ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)'),
+              fontSize: 11, marginBottom: 8,
+            }}>
+              <strong style={{ color: multiSendProgress.failed === 0 ? '#22c55e' : '#ef4444' }}>
+                {multiSendProgress.failed === 0 ? '✅ All ' : '⚠️ '}{multiSendProgress.sent} sent{multiSendProgress.failed > 0 ? ', ' + multiSendProgress.failed + ' failed' : ''}
+              </strong>
+            </div>
+            <div style={{ maxHeight: 150, overflowY: 'auto', fontSize: 10 }}>
+              {multiSendProgress.results.map((res, i) => (
+                <div key={i} style={{
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                  padding: '4px 8px', borderRadius: 4,
+                  background: res.status === 'confirmed' ? 'rgba(34,197,94,0.04)' : 'rgba(239,68,68,0.04)',
+                  marginBottom: 2,
+                }}>
+                  <span style={{ color: 'var(--text-dim)' }}>
+                    {res.address.slice(0, 8)}...{res.address.slice(-4)}
+                  </span>
+                  <span style={{ color: '#a78bfa' }}>{res.eth.slice(0, 8)} ETH</span>
+                  <span>
+                    {res.status === 'confirmed' ? (
+                      <a href={EXPLORER_BASE + res.txHash} target="_blank" rel="noopener noreferrer" style={{ color: '#22c55e', textDecoration: 'none' }}>✅ ↗</a>
+                    ) : (
+                      <span style={{ color: '#ef4444' }}>❌</span>
+                    )}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Network Config */}
