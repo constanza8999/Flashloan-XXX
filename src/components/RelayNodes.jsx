@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { ETH_RPCS } from '../constants'
 import { ethers } from 'ethers'
 import { useProvider } from '../hooks'
@@ -53,6 +53,16 @@ const FLASH_ARBITRAGE_ABI = [
     "outputs": [{"name": "", "type": "address"}],
     "type": "function",
   },
+]
+
+// Minimal ERC20 ABI for balance & decimals
+const ERC20_BALANCE_ABI = [
+  {"constant": true, "inputs": [{"name": "_owner", "type": "address"}],
+   "name": "balanceOf", "outputs": [{"name": "", "type": "uint256"}], "type": "function"},
+  {"constant": true, "inputs": [],
+   "name": "decimals", "outputs": [{"name": "", "type": "uint8"}], "type": "function"},
+  {"constant": true, "inputs": [],
+   "name": "symbol", "outputs": [{"name": "", "type": "string"}], "type": "function"},
 ]
 
 // Generate initial tx history for a node
@@ -118,6 +128,14 @@ export default function RelayNodes() {
   const [contractBalanceLoading, setContractBalanceLoading] = useState(false)
   const [contractOwner, setContractOwner] = useState(null)
   const [contractError, setContractError] = useState('')
+  // Token rescue state
+  const [tokenAddress, setTokenAddress] = useState('')
+  const [tokenBalance, setTokenBalance] = useState(null)
+  const [tokenSymbol, setTokenSymbol] = useState('')
+  const [tokenDecimals, setTokenDecimals] = useState(18)
+  const [tokenLoading, setTokenLoading] = useState(false)
+  const [tokenError, setTokenError] = useState('')
+
   const [multiSendMode, setMultiSendMode] = useState('equal') // 'equal' | 'fixed' | 'percent'
   const [multiSendRecipients, setMultiSendRecipients] = useState([])
   const [multiSendProgress, setMultiSendProgress] = useState({ total: 0, sent: 0, failed: 0, current: -1, results: [] })
@@ -129,41 +147,73 @@ export default function RelayNodes() {
     } catch { /* storage full */ }
   }, [nodes])
 
-  // ─── Fetch contract on-chain balance ───────────────────────────────────
-  useEffect(() => {
+  // ─── Fetch contract on-chain balance (reusable) ───────────────────────
+  const fetchContractBalance = useCallback(async () => {
     if (!contractAddress || !ethers.isAddress(contractAddress)) {
       setContractBalance(null)
       setContractOwner(null)
       setContractError('')
       return
     }
-    let cancelled = false
-    const fetchBalance = async () => {
-      setContractBalanceLoading(true)
-      setContractError('')
+    if (!ethProvider) return
+    setContractBalanceLoading(true)
+    setContractError('')
+    try {
+      const addr = ethers.getAddress(contractAddress)
+      const bal = await ethProvider.getBalance(addr)
+      setContractBalance(ethers.formatEther(bal))
       try {
-        const addr = ethers.getAddress(contractAddress)
-        const bal = await ethProvider.getBalance(addr)
-        if (!cancelled) setContractBalance(ethers.formatEther(bal))
-        try {
-          const contract = new ethers.Contract(addr, FLASH_ARBITRAGE_ABI, ethProvider)
-          const owner = await contract.owner()
-          if (!cancelled) setContractOwner(owner)
-        } catch {
-          if (!cancelled) setContractOwner(null)
-        }
-      } catch (err) {
-        if (!cancelled) { setContractError(err.message); setContractBalance(null) }
+        const contract = new ethers.Contract(addr, FLASH_ARBITRAGE_ABI, ethProvider)
+        const owner = await contract.owner()
+        setContractOwner(owner)
+      } catch {
+        setContractOwner(null)
       }
-      if (!cancelled) setContractBalanceLoading(false)
+    } catch (err) {
+      setContractError(err.message)
+      setContractBalance(null)
     }
-    fetchBalance()
-    return () => { cancelled = true }
+    setContractBalanceLoading(false)
   }, [contractAddress, ethProvider])
+
+  // Auto-fetch on mount / address change
+  useEffect(() => { fetchContractBalance() }, [fetchContractBalance])
 
   useEffect(() => {
     try { localStorage.setItem(CONTRACT_ADDR_KEY, contractAddress) } catch {}
   }, [contractAddress])
+
+  // ─── Fetch token balance from contract ────────────────────────────────
+  const fetchTokenBalance = useCallback(async () => {
+    if (!contractAddress || !ethers.isAddress(contractAddress) || !tokenAddress || !ethers.isAddress(tokenAddress)) {
+      setTokenBalance(null)
+      setTokenSymbol('')
+      setTokenError('')
+      return
+    }
+    if (!ethProvider) return
+    setTokenLoading(true)
+    setTokenError('')
+    try {
+      const tokenContract = new ethers.Contract(ethers.getAddress(tokenAddress), ERC20_BALANCE_ABI, ethProvider)
+      const [bal, decimals, symbol] = await Promise.all([
+        tokenContract.balanceOf(ethers.getAddress(contractAddress)),
+        tokenContract.decimals(),
+        tokenContract.symbol(),
+      ])
+      setTokenBalance(ethers.formatUnits(bal, decimals))
+      setTokenSymbol(symbol)
+      setTokenDecimals(decimals)
+    } catch (err) {
+      setTokenError(err.message)
+      setTokenBalance(null)
+      setTokenSymbol('')
+    }
+    setTokenLoading(false)
+  }, [contractAddress, tokenAddress, ethProvider])
+
+  // Auto-fetch token balance when address changes
+  useEffect(() => { fetchTokenBalance() }, [fetchTokenBalance])
 
   const [networkConfig, setNetworkConfig] = useState({ heartbeatInterval: 30, failoverThreshold: 3, rebalanceEnabled: true, autoDiscovery: true })
   const [withdrawing, setWithdrawing] = useState(false)
@@ -351,6 +401,83 @@ export default function RelayNodes() {
         time: new Date().toLocaleTimeString(),
         type: 'withdraw',
         msg: '❌ FAILED: ' + err.message,
+        txHash: '',
+        status: 'failed',
+        explorerUrl: '',
+      })
+    }
+
+    setWithdrawing(false)
+  }
+
+  async function handleRescueTokens() {
+    if (!tokenBalance || parseFloat(tokenBalance) <= 0) {
+      addLog('(x) No token balance to withdraw', 'error')
+      return
+    }
+    if (!contractAddress || !ethers.isAddress(contractAddress)) {
+      addLog('(x) Invalid contract address', 'error')
+      return
+    }
+    if (!tokenAddress || !ethers.isAddress(tokenAddress)) {
+      addLog('(x) Invalid token address', 'error')
+      return
+    }
+    if (!ethProvider) {
+      addLog('(x) No RPC connection', 'error')
+      return
+    }
+    if (!signer) {
+      addLog('(x) No wallet connected — connect your owner wallet first', 'error')
+      return
+    }
+
+    setWithdrawing(true)
+    addLog('🪙 Rescuing ' + parseFloat(tokenBalance).toFixed(6) + ' ' + tokenSymbol + ' from contract → your wallet (' + walletAddress.slice(0, 10) + '...)', 'info')
+
+    try {
+      const contractAddr = ethers.getAddress(contractAddress)
+      const contract = new ethers.Contract(contractAddr, FLASH_ARBITRAGE_ABI, signer)
+      const tokenAddr = ethers.getAddress(tokenAddress)
+      const amountWei = ethers.parseUnits(parseFloat(tokenBalance).toFixed(tokenDecimals), tokenDecimals)
+
+      const feeData = await ethProvider.getFeeData()
+      addLog('  Calling rescueTokens() with ' + parseFloat(tokenBalance).toFixed(6) + ' ' + tokenSymbol + '...', 'info')
+
+      const tx = await contract.rescueTokens(tokenAddr, amountWei, {
+        gasLimit: 200000n,
+        maxPriorityFeePerGas: feeData.maxPriorityFeePerGas || ethers.parseUnits('1', 'gwei'),
+        maxFeePerGas: feeData.maxFeePerGas || ethers.parseUnits('30', 'gwei'),
+      })
+
+      addLog('  Tx sent: ' + tx.hash.slice(0, 18) + '...', 'success')
+
+      const receipt = await tx.wait()
+      const explorerUrl = EXPLORER_BASE + tx.hash
+
+      addLog('  ✅ Confirmed in block ' + receipt.blockNumber + '!', 'profit')
+      addLog('  🔗 ' + explorerUrl, 'link')
+
+      addNodeTxLog(Date.now(), {
+        id: Date.now(),
+        time: new Date().toLocaleTimeString(),
+        type: 'withdraw',
+        msg: 'rescueTokens(): ' + parseFloat(tokenBalance).toFixed(6) + ' ' + tokenSymbol + ' → ' + walletAddress.slice(0, 10) + '...',
+        txHash: tx.hash,
+        status: receipt.status === 1 ? 'confirmed' : 'failed',
+        explorerUrl,
+      })
+
+      setTokenBalance('0')
+      addLog('(done) ✅ ' + parseFloat(tokenBalance).toFixed(6) + ' ' + tokenSymbol + ' rescued to your wallet!', 'profit')
+
+    } catch (err) {
+      addLog('(x) RESCUE TOKENS FAILED: ' + err.message, 'error')
+      addNodeTxLog(Date.now(), {
+        id: Date.now(),
+        time: new Date().toLocaleTimeString(),
+        type: 'withdraw',
+        msg: '❌ rescueTokens FAILED: ' + err.message,
         txHash: '',
         status: 'failed',
         explorerUrl: '',
@@ -820,7 +947,16 @@ export default function RelayNodes() {
         {/* On-chain balance display */}
         <div className="form-grid" style={{ gridTemplateColumns: '2fr 1fr auto' }}>
           <div className="form-group">
-            <label>🏦 Contract Balance (on-chain)</label>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+              <label style={{ margin: 0 }}>🏦 Contract Balance (on-chain)</label>
+              <button
+                className="btn btn-secondary"
+                onClick={fetchContractBalance}
+                disabled={contractBalanceLoading || !ethers.isAddress(contractAddress)}
+                style={{ fontSize: 10, padding: '3px 8px', lineHeight: 1 }}
+                title="Refresh balance from chain"
+              >{contractBalanceLoading ? '⏳' : '🔄'}</button>
+            </div>
             <div style={{
               padding: '10px 14px', background: 'var(--bg-input)', borderRadius: 6,
               border: '1px solid rgba(34,197,94,0.2)',
@@ -884,6 +1020,104 @@ export default function RelayNodes() {
             <li>The contract sends its entire ETH balance to the contract <strong>owner</strong> (your wallet)</li>
             <li>Your wallet must be the contract owner — MetaMask will prompt you to confirm</li>
             <li>Gas is paid from your wallet (~100k gas for the contract call)</li>
+          </ul>
+        </div>
+      </div>
+
+      {/* ─── Token Rescue ──────────────────────────────────────────────── */}
+      <div className="config-panel" style={{ borderColor: 'rgba(168,85,247,0.3)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+          <h3 style={{ margin: 0 }}>🪙 Token Rescue (ERC20)</h3>
+          <span style={{ fontSize: 10, color: 'var(--text-dim)' }}>
+            Withdraw ERC20 tokens from the FlashArbitrage contract
+          </span>
+        </div>
+
+        {/* Token address input */}
+        <div className="form-group" style={{ marginBottom: 12 }}>
+          <label>🔗 Token Contract Address</label>
+          <input
+            type="text"
+            className="input mono"
+            value={tokenAddress}
+            onChange={e => setTokenAddress(e.target.value)}
+            placeholder="0x... (USDT, USDC, WETH, etc.)"
+            style={{ fontSize: 12 }}
+          />
+          <span className="form-hint">
+            Enter the ERC20 token address held by the contract. Balance auto-fetches.
+          </span>
+        </div>
+
+        {/* Token balance + rescue button */}
+        <div className="form-grid" style={{ gridTemplateColumns: '2fr 1fr auto' }}>
+          <div className="form-group">
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+              <label style={{ margin: 0 }}>🪙 Token Balance (on contract)</label>
+              <button
+                className="btn btn-secondary"
+                onClick={fetchTokenBalance}
+                disabled={tokenLoading || !ethers.isAddress(tokenAddress) || !ethers.isAddress(contractAddress)}
+                style={{ fontSize: 10, padding: '3px 8px', lineHeight: 1 }}
+                title="Refresh token balance"
+              >{tokenLoading ? '⏳' : '🔄'}</button>
+            </div>
+            <div style={{
+              padding: '10px 14px', background: 'var(--bg-input)', borderRadius: 6,
+              border: '1px solid rgba(168,85,247,0.2)',
+              fontSize: 18, fontWeight: 700, color: '#a78bfa',
+            }}>
+              {tokenLoading ? (
+                <span style={{ fontSize: 13, color: '#888' }}>⏳ Loading...</span>
+              ) : tokenBalance !== null ? (
+                <>{parseFloat(tokenBalance).toFixed(6)} {tokenSymbol || 'TOKEN'}</>
+              ) : tokenError ? (
+                <span style={{ fontSize: 12, color: '#ef4444' }}>❌ {tokenError.slice(0, 40)}</span>
+              ) : (
+                <span style={{ fontSize: 12, color: '#888' }}>Enter token address above</span>
+              )}
+            </div>
+          </div>
+          <div className="form-group">
+            <label>&nbsp;</label>
+            <div style={{
+              padding: '10px 14px', borderRadius: 6,
+              background: 'var(--bg-input)',
+              border: '1px solid var(--border)',
+              fontSize: 12, color: 'var(--text-dim)',
+            }}>
+              {tokenSymbol ? `${tokenSymbol} (${tokenDecimals} decimals)` : 'Token info'}
+            </div>
+          </div>
+          <div className="form-group" style={{ justifyContent: 'flex-end' }}>
+            <button
+              className="btn btn-primary"
+              onClick={handleRescueTokens}
+              disabled={withdrawing || !tokenBalance || parseFloat(tokenBalance) <= 0 || !ethProvider || !signer || !ethers.isAddress(tokenAddress)}
+              style={{
+                fontSize: 12, padding: '10px 20px', marginTop: 22, minWidth: 150,
+                background: 'linear-gradient(135deg, #a78bfa, #7c3aed)',
+                border: 'none',
+              }}
+            >
+              {withdrawing ? '⏳ Rescuing...' : '🪙 rescueTokens() → Wallet'}
+            </button>
+          </div>
+        </div>
+
+        <div style={{
+          marginTop: 10, padding: '8px 12px', borderRadius: 6,
+          background: 'rgba(168,85,247,0.06)',
+          border: '1px solid rgba(168,85,247,0.15)',
+          fontSize: 11, color: '#a78bfa', lineHeight: 1.5,
+        }}>
+          <strong>🪙 How token rescue works</strong>
+          <ul style={{ margin: '4px 0 0 16px', color: '#a3a3a3' }}>
+            <li>Enter any ERC20 token address (USDT, USDC, WETH, etc.) held by the contract</li>
+            <li>The balance is auto-fetched from the contract</li>
+            <li>Clicking rescue calls <code>rescueTokens(token, amount)</code> which sends the tokens to the <strong>owner</strong></li>
+            <li>Your wallet must be the contract owner — MetaMask will prompt you to confirm</li>
+            <li>Gas is paid from your wallet (~200k gas for the token call)</li>
           </ul>
         </div>
       </div>
