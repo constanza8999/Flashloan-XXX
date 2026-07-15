@@ -3,7 +3,7 @@ import { useSubscription, PLANS } from '../context/SubscriptionContext'
 import CopyButton from './shared/CopyButton'
 import LoadingButton from './shared/LoadingButton'
 
-export default function SubscriptionPlans({ onUpgrade }) {
+export default function SubscriptionPlans({ onNavigate, onUpgrade }) {
   const { user, userTier, purchasePlan, activateLicense, loading, logout, isLoggedIn } = useSubscription()
   const [selectedPlan, setSelectedPlan] = useState(null)
   const [purchaseResult, setPurchaseResult] = useState(null)
@@ -43,6 +43,90 @@ export default function SubscriptionPlans({ onUpgrade }) {
       setActivateError(result.error || 'Activation failed')
     }
     setActivating(false)
+  }
+
+  // ─── Not logged in: show prompt ─────────────────────────────
+  if (!isLoggedIn) {
+    return (
+      <div className="tool-page">
+        <div className="tool-header">
+          <span className="tool-icon">💳</span>
+          <div>
+            <h2>Subscription Plans</h2>
+            <p>Choose the plan that fits your needs. Cancel anytime.</p>
+          </div>
+        </div>
+
+        <div className="auth-signup-prompt">
+          <div className="asp-icon">🔐</div>
+          <h3>Sign in to Subscribe</h3>
+          <p>
+            Create a free account or sign in to purchase a subscription plan
+            and unlock all premium features.
+          </p>
+          <div className="asp-actions">
+            <button
+              className="btn btn-primary"
+              onClick={() => onNavigate?.('auth')}
+            >
+              🔐 Sign In / Create Account
+            </button>
+          </div>
+          <div className="asp-features">
+            <span>✓ Free plan available</span>
+            <span>✓ PayPal payments</span>
+            <span>✓ Cancel anytime</span>
+          </div>
+        </div>
+
+        {/* Show plans preview so users can see what's available */}
+        <div className="plans-grid">
+          {Object.values(PLANS).map(plan => {
+            const isCurrent = userTier === plan.id
+            return (
+              <div
+                key={plan.id}
+                className={`plan-card ${plan.popular ? 'plan-popular' : ''}`}
+              >
+                {plan.popular && <div className="plan-badge">Most Popular</div>}
+                <div className="plan-header" style={{ '--plan-color': plan.color }}>
+                  <span className="plan-icon">{plan.icon}</span>
+                  <h3 className="plan-name">{plan.name}</h3>
+                  <p className="plan-desc">{plan.description}</p>
+                </div>
+                <div className="plan-price">
+                  {plan.price === 0 ? (
+                    <span className="plan-price-free">Free</span>
+                  ) : (
+                    <>
+                      <span className="plan-price-amount">${plan.price}</span>
+                      <span className="plan-price-period">/{plan.period}</span>
+                    </>
+                  )}
+                </div>
+                <ul className="plan-features">
+                  {plan.features.map((f, i) => (
+                    <li key={i} className="plan-feature">
+                      <span className="plan-feature-check">✓</span>
+                      {f}
+                    </li>
+                  ))}
+                </ul>
+                <div className="plan-action">
+                  <button
+                    className={`btn ${plan.popular ? 'btn-primary' : 'btn-secondary'}`}
+                    disabled
+                    style={{ width: '100%', justifyContent: 'center' }}
+                  >
+                    {plan.price === 0 ? 'Free' : `💳 $${plan.price}/mo`}
+                  </button>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+    )
   }
 
   return (

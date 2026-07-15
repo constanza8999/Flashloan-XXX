@@ -24,7 +24,8 @@ import RelayNodes from './components/RelayNodes'
 import PricePredictor from './components/PricePredictor'
 import { Web3Provider } from './context/Web3Context'
 import { SubscriptionProvider, useSubscription } from './context/SubscriptionContext'
-import AuthModal from './components/AuthModal'
+import AuthPage from './components/AuthPage'
+
 import SubscriptionPlans from './components/SubscriptionPlans'
 import AdminPanel from './components/AdminPanel'
 
@@ -36,6 +37,7 @@ const NAV_CATEGORIES = [
     label: 'Main',
     tabs: [
       { id: 'dashboard', label: 'Dashboard', icon: '◈', desc: 'Overview & quick actions', badge: null },
+      { id: 'auth', label: 'Sign In', icon: '🔐', desc: 'Login or create an account', badge: null },
     ],
   },
   {
@@ -193,15 +195,15 @@ const TAB_RENDER_MAP = {
   'p2p-network':    () => <P2PNetwork />,
   'relay-nodes':    () => <RelayNodes />,
   predictor:        () => <PricePredictor />,
-  subscription:     () => <SubscriptionPlans />,
+  subscription:     () => <SubscriptionPlans onNavigate={setActiveTab} />,
   'admin-panel':    () => <AdminPanel />,
+  auth:             (p) => <AuthPage onNavigate={p.setActiveTab} />,
 }
 
 function AppContent() {
   const [activeTab, setActiveTab] = useState('dashboard')
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [navSearch, setNavSearch] = useState('')
-  const [showAuthModal, setShowAuthModal] = useState(false)
   const { theme, toggleTheme } = useTheme()
   const { user, isLoggedIn, isAdmin, userTier, logout } = useSubscription()
   const isDark = theme === 'dark'
@@ -263,7 +265,7 @@ function AppContent() {
                 {isAdmin && <span className="ha-admin-badge">ADMIN</span>}
               </div>
             ) : (
-              <button className="header-auth-btn" onClick={() => setShowAuthModal(true)}>
+              <button className="header-auth-btn" onClick={() => { setActiveTab('auth'); setMobileMenuOpen(false) }}>
                 🔐 Sign In
               </button>
             )}
@@ -338,9 +340,6 @@ function AppContent() {
           {renderTab(activeTab)}
         </main>
       </div>
-
-      {/* Auth Modal */}
-      {showAuthModal && <AuthModal onClose={() => setShowAuthModal(false)} />}
 
       <footer className="app-footer">
         <span>Multi-Chain Token Toolkit v1.0</span>

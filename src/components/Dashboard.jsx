@@ -1,5 +1,6 @@
 import React from 'react'
 import { useWeb3 } from '../context/Web3Context'
+import BackendControl from './BackendControl'
 
 const QUICK_ACTIONS = [
   {
@@ -197,6 +198,11 @@ export default function Dashboard({ onNavigate }) {
           <strong>Polygon</strong>, and <strong>Arbitrum</strong> with Flashbots MEV protection, auto-bot scheduling, mempool monitoring, and more.
         </p>
       </div>
+
+      <section className="section">
+        <h2 className="section-title">Server</h2>
+        <BackendControl />
+      </section>
 
       <section className="section">
         <h2 className="section-title">Wallet</h2>

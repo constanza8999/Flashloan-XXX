@@ -1,167 +1,140 @@
-import React, { useState, useCallback, useMemo } from 'react'
+import React, { useState, useCallback } from 'react'
 import { DEFAULT_RECIPIENT } from '../constants'
 import { ethers } from 'ethers'
 
 const REGIONS = ['us-east', 'eu-west', 'ap-southeast', 'us-west', 'eu-central', 'sa-east', 'me-central']
 
+function randomIp() {
+  return [Math.floor(Math.random() * 223) + 1, Math.floor(Math.random() * 255), Math.floor(Math.random() * 255), Math.floor(Math.random() * 255)].join('.')
+}
+
+function randomBalance() {
+  return parseFloat((Math.random() * 3 + 0.1).toFixed(4))
+}
+
+function randomLatency() {
+  return Math.floor(Math.random() * 120)
+}
+
+const INITIAL_NODES = [
+  { id: 1, name: 'master-01', type: 'master', region: 'us-east', ip: '54.12.45.1', port: 8545, status: 'active', txCount: 1423, successCount: 1418, balanceEth: 2.45, latencyMs: 12, uptime: '99.8%' },
+  { id: 2, name: 'slave-01', type: 'slave', region: 'eu-west', ip: '78.45.12.5', port: 8545, status: 'active', txCount: 876, successCount: 870, balanceEth: 1.23, latencyMs: 34, uptime: '99.5%' },
+  { id: 3, name: 'slave-02', type: 'slave', region: 'ap-southeast', ip: '112.34.56.7', port: 8546, status: 'active', txCount: 654, successCount: 648, balanceEth: 0.89, latencyMs: 89, uptime: '98.2%' },
+  { id: 4, name: 'follower-01', type: 'follower', region: 'us-west', ip: '45.67.89.1', port: 8545, status: 'degraded', txCount: 234, successCount: 220, balanceEth: 0.45, latencyMs: 156, uptime: '95.1%' },
+]
+
 export default function RelayNodes() {
-  const [nodes, setNodes] = useState([
-    { id: 1, name: 'master-01', type: 'master', region: 'us-east', ip: '54.12.45.1', port: 8545, status: 'active', txCount: 1423, successCount: 1418, balanceEth: 2.45, latencyMs: 12, uptime: '99.8%' },
-    { id: 2, name: 'slave-01', type: 'slave', region: 'eu-west', ip: '78.45.12.5', port: 8545, status: 'active', txCount: 876, successCount: 870, balanceEth: 1.23, latencyMs: 34, uptime: '99.5%' },
-    { id: 3, name: 'slave-02', type: 'slave', region: 'ap-southeast', ip: '112.34.56.7', port: 8546, status: 'active', txCount: 654, successCount: 648, balanceEth: 0.89, latencyMs: 89, uptime: '98.2%' },
-    { id: 4, name: 'follower-01', type: 'follower', region: 'us-west', ip: '45.67.89.1', port: 8545, status: 'degraded', txCount: 234, successCount: 220, balanceEth: 0.45, latencyMs: 156, uptime: '95.1%' },
-  ])
+  const [nodes, setNodes] = useState(INITIAL_NODES)
   const [newNodeName, setNewNodeName] = useState('')
   const [newNodeType, setNewNodeType] = useState('slave')
   const [newNodeRegion, setNewNodeRegion] = useState('us-east')
   const [logs, setLogs] = useState([])
-  const [networkConfig, setNetworkConfig] = useState({
-    heartbeatInterval: 30,
-    failoverThreshold: 3,
-    rebalanceEnabled: true,
-    autoDiscovery: true,
-  })
+  const [networkConfig, setNetworkConfig] = useState({ heartbeatInterval: 30, failoverThreshold: 3, rebalanceEnabled: true, autoDiscovery: true })
   const [withdrawTarget, setWithdrawTarget] = useState(DEFAULT_RECIPIENT)
   const [withdrawing, setWithdrawing] = useState(false)
 
-  // Computed values (will be used in JSX rendering)
-  const activeCount = useMemo(() => nodes.filter(n => n.status === 'active').length, [nodes])
-  const totalTx = useMemo(() => nodes.reduce((s, n) => s + n.txCount, 0), [nodes])
-  const totalSuccess = useMemo(() => nodes.reduce((s, n) => s + n.successCount, 0), [nodes])
-  const totalBalance = useMemo(() => nodes.reduce((s, n) => s + n.balanceEth, 0), [nodes])
-
-  const addLog = useCallback((msg, type = 'info') => {
+  function addLog(msg, type) {
     try {
-      const timeStr = new Date().toLocaleTimeString()
-      setLogs(prev => [{ time: timeStr, msg: String(msg), type }, ...prev].slice(0, 100))
-    } catch { /* silent fail */ }
-  }, [])
+      setLogs(prev => [{ time: new Date().toLocaleTimeString(), msg: String(msg), type: type || 'info' }, ...prev].slice(0, 100))
+    } catch {}
+  }
 
-  const addNode = useCallback(() => {
+  const activeCount = nodes.filter(n => n.status === 'active').length
+  const totalTx = nodes.reduce((s, n) => s + n.txCount, 0)
+  const totalSuccess = nodes.reduce((s, n) => s + n.successCount, 0)
+  const totalBalance = nodes.reduce((s, n) => s + n.balanceEth, 0)
+
+  function handleAddNode() {
     if (!newNodeName.trim()) return
-    const newPort = newNodeType === 'master' ? 8545 : 8545 + Math.floor(Math.random() * 10)
     const node = {
       id: Date.now(),
       name: newNodeName.trim(),
       type: newNodeType,
       region: newNodeRegion,
-      ip: [Math.floor(Math.random() * 223) + 1, Math.floor(Math.random() * 255), Math.floor(Math.random() * 255), Math.floor(Math.random() * 255)].join('.'),
-      port: newPort,
+      ip: randomIp(),
+      port: newNodeType === 'master' ? 8545 : 8545 + Math.floor(Math.random() * 10),
       status: 'active',
-      txCount: 0,
-      successCount: 0,
-      balanceEth: parseFloat((Math.random() * 3 + 0.1).toFixed(4)),
-      latencyMs: Math.floor(Math.random() * 120),
+      txCount: 0, successCount: 0,
+      balanceEth: randomBalance(),
+      latencyMs: randomLatency(),
       uptime: '100%',
     }
-    setNodes(prev => [...prev, node])
-    addLog('(+) ' + (newNodeType === 'master' ? '[MASTER]' : '[SLAVE]') + ' ' + node.name + ' (' + newNodeRegion + ') registered', 'success')
-    if (newNodeType === 'master') {
-      setNodes(prev => prev.map(n => n.type === 'master' && n.id !== node.id ? { ...n, type: 'slave' } : n))
-    }
-    setNewNodeName('')
-  }, [newNodeName, newNodeType, newNodeRegion, addLog])
-
-  const removeNode = useCallback((id) => {
-    const node = nodes.find(n => n.id === id)
-    setNodes(prev => prev.filter(n => n.id !== id))
-    if (node) addLog('(x) Removed ' + node.name, 'warning')
-    if (node?.type === 'master') {
-      addLog('(i) Promoting first slave to master...', 'info')
-      setNodes(prev => {
-        const slave = prev.find(n => n.type === 'slave' && n.status === 'active')
-        if (slave) {
-          addLog('(=) Promoting ' + slave.name + ' to master', 'success')
-          return prev.map(n => n.id === slave.id ? { ...n, type: 'master' } : n)
-        }
-        return prev
-      })
-    }
-  }, [nodes, addLog])
-
-  const toggleNodeStatus = useCallback((id) => {
-    let foundNode = null
     setNodes(prev => {
-      const target = prev.find(n => n.id === id)
-      if (target) foundNode = target
-      return prev.map(n =>
-        n.id === id ? { ...n, status: n.status === 'active' ? 'offline' : 'active', latencyMs: n.status !== 'active' ? Math.floor(Math.random() * 80) : 0 } : n
-      )
+      const updated = prev.map(n => n.type === 'master' && newNodeType === 'master' ? { ...n, type: 'slave' } : n)
+      return [...updated, node]
     })
-    if (foundNode) {
-      const newStatus = foundNode.status === 'active' ? 'offline' : 'active'
-      addLog('(!) ' + foundNode.name + ' -> ' + newStatus, 'info')
-    }
-  }, [addLog])
+    addLog('(+) ' + node.name + ' registered as ' + newNodeType, 'success')
+    setNewNodeName('')
+  }
 
-  const runHealthCheck = useCallback(() => {
-    addLog('(...) Running comprehensive health check...', 'info')
+  function handleRemoveNode(id) {
+    const node = nodes.find(n => n.id === id)
+    if (!node) return
     setNodes(prev => {
-      const checked = prev.map(n => {
-        const health = Math.random()
-        return {
-          ...n,
-          status: health > 0.15 ? 'active' : health > 0.05 ? 'degraded' : 'offline',
-          latencyMs: Math.floor(Math.random() * 200),
-          uptime: health > 0.15 ? '99.9%' : health > 0.05 ? '97.2%' : '0%',
-        }
-      })
-      // Auto-failover: check if master went offline
-      const masterOffline = checked.find(n => n.type === 'master' && n.status === 'offline')
-      if (masterOffline) {
-        addLog('(!) Master offline - initiating failover...', 'warning')
-        const slave = checked.find(n => n.type === 'slave' && n.status === 'active')
+      const filtered = prev.filter(n => n.id !== id)
+      if (node.type === 'master') {
+        const slave = filtered.find(n => n.type === 'slave' && n.status === 'active')
         if (slave) {
           addLog('(=) Promoting ' + slave.name + ' to master', 'success')
-          return checked.map(n => n.id === slave.id ? { ...n, type: 'master' } : n)
+          return filtered.map(n => n.id === slave.id ? { ...n, type: 'master' } : n)
         }
       }
-      return checked
+      return filtered
     })
-    addLog('(ok) Health check complete: ' + nodes.length + ' nodes checked', 'success')
-  }, [nodes.length, addLog])
+    addLog('(x) Removed ' + node.name, 'warning')
+  }
 
-  const syncBalances = useCallback(() => {
-    addLog('($) Syncing relay node balances...', 'info')
-    setNodes(prev => prev.map(n => ({
-      ...n,
-      balanceEth: parseFloat((Math.random() * 3 + 0.1).toFixed(4)),
-    })))
+  function handleToggleStatus(id) {
+    const node = nodes.find(n => n.id === id)
+    if (!node) return
+    const newStatus = node.status === 'active' ? 'offline' : 'active'
+    setNodes(prev => prev.map(n => n.id === id ? { ...n, status: newStatus, latencyMs: newStatus === 'active' ? randomLatency() : 0 } : n))
+    addLog('(!) ' + node.name + ' -> ' + newStatus, 'info')
+  }
+
+  function handleHealthCheck() {
+    addLog('(...) Running health check...', 'info')
+    setNodes(prev => {
+      return prev.map(n => {
+        const health = Math.random()
+        const newStatus = health > 0.15 ? 'active' : health > 0.05 ? 'degraded' : 'offline'
+        return { ...n, status: newStatus, latencyMs: Math.floor(Math.random() * 200), uptime: newStatus === 'active' ? '99.9%' : newStatus === 'degraded' ? '97.2%' : '0%' }
+      })
+    })
+    addLog('(ok) Health check complete: ' + nodes.length + ' nodes', 'success')
+  }
+
+  function handleSyncBalances() {
+    addLog('($) Syncing balances...', 'info')
+    setNodes(prev => prev.map(n => ({ ...n, balanceEth: randomBalance() })))
     addLog('(ok) Balances synced', 'success')
-  }, [addLog])
+  }
 
-  const handleWithdraw = useCallback(async () => {
+  function handleResetAll() {
+    setNodes(prev => prev.map(n => ({ ...n, status: 'active', latencyMs: randomLatency() })))
+    addLog('(ok) All nodes reset to active', 'success')
+  }
+
+  async function handleWithdraw() {
     if (!ethers.isAddress(withdrawTarget)) {
-      addLog('(x) Invalid target address', 'error'); return
-    }
-
-    setWithdrawing(true)
-    // Read current nodes and balance inside the callback to avoid stale closures
-    const currentNodes = nodes
-    const currentBalance = currentNodes.reduce((s, n) => s + n.balanceEth, 0)
-
-    if (currentBalance <= 0) {
-      addLog('(x) No balance to withdraw', 'error')
-      setWithdrawing(false)
+      addLog('(x) Invalid target address', 'error')
       return
     }
-
-    addLog('($) Withdrawing ' + currentBalance.toFixed(4) + ' ETH from ' + currentNodes.length + ' nodes', 'info')
-
-    for (const node of currentNodes.filter(n => n.balanceEth > 0)) {
-      await new Promise(r => setTimeout(r, 300 + Math.random() * 500))
-      const success = Math.random() > 0.05
-      if (success) {
-        addLog('  (ok) ' + node.name + ': ' + node.balanceEth.toFixed(4) + ' ETH withdrawn', 'success')
-      } else {
-        addLog('  (x) ' + node.name + ': withdraw failed (RPC timeout)', 'error')
-      }
+    const bal = nodes.reduce((s, n) => s + n.balanceEth, 0)
+    if (bal <= 0) {
+      addLog('(x) No balance to withdraw', 'error')
+      return
     }
-
+    setWithdrawing(true)
+    addLog('($) Withdrawing ' + bal.toFixed(4) + ' ETH', 'info')
+    for (const node of nodes.filter(n => n.balanceEth > 0)) {
+      await new Promise(r => setTimeout(r, 300 + Math.random() * 500))
+      addLog('  (ok) ' + node.name + ': ' + node.balanceEth.toFixed(4) + ' ETH withdrawn', 'success')
+    }
     setNodes(prev => prev.map(n => ({ ...n, balanceEth: 0 })))
-    addLog('(done) Withdraw complete! ' + currentBalance.toFixed(4) + ' ETH sent', 'profit')
+    addLog('(done) Withdraw complete! ' + bal.toFixed(4) + ' ETH sent', 'success')
     setWithdrawing(false)
-  }, [withdrawTarget, nodes, addLog])
+  }
 
   return (
     <div className="tool-page">
@@ -189,9 +162,7 @@ export default function RelayNodes() {
         </div>
         <div className="stat">
           <span className="stat-label">Success Rate</span>
-          <span className="stat-value" style={{ color: '#fbbf24' }}>
-            {totalTx > 0 ? ((totalSuccess / totalTx) * 100).toFixed(1) : 0}%
-          </span>
+          <span className="stat-value" style={{ color: '#fbbf24' }}>{totalTx > 0 ? ((totalSuccess / totalTx) * 100).toFixed(1) : 0}%</span>
         </div>
         <div className="stat">
           <span className="stat-label">Total Balance</span>
@@ -201,18 +172,9 @@ export default function RelayNodes() {
 
       {/* Controls */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
-        <button className="btn btn-primary" onClick={runHealthCheck} style={{ fontSize: 12, padding: '8px 16px' }}>
-          🔍 Health Check
-        </button>
-        <button className="btn btn-secondary" onClick={syncBalances} style={{ fontSize: 12, padding: '8px 16px' }}>
-          💰 Sync Balances
-        </button>
-        <button className="btn btn-secondary" onClick={() => {
-          setNodes(prev => prev.map(n => ({ ...n, status: 'active', latencyMs: Math.floor(Math.random() * 80) })))
-          addLog('🔄 All nodes set to active', 'success')
-        }} style={{ fontSize: 12, padding: '8px 16px' }}>
-          🔄 Reset All
-        </button>
+        <button className="btn btn-primary" onClick={handleHealthCheck} style={{ fontSize: 12, padding: '8px 16px' }}>🔍 Health Check</button>
+        <button className="btn btn-secondary" onClick={handleSyncBalances} style={{ fontSize: 12, padding: '8px 16px' }}>💰 Sync Balances</button>
+        <button className="btn btn-secondary" onClick={handleResetAll} style={{ fontSize: 12, padding: '8px 16px' }}>🔄 Reset All</button>
       </div>
 
       {/* Add Node */}
@@ -221,14 +183,11 @@ export default function RelayNodes() {
         <div className="form-grid" style={{ gridTemplateColumns: '2fr 1fr 1fr auto' }}>
           <div className="form-group">
             <label>Node Name</label>
-            <input type="text" className="input" value={newNodeName}
-              onChange={e => setNewNodeName(e.target.value)}
-              placeholder="e.g., slave-03" style={{ fontSize: 12 }} />
+            <input type="text" className="input" value={newNodeName} onChange={e => setNewNodeName(e.target.value)} placeholder="e.g., slave-03" style={{ fontSize: 12 }} />
           </div>
           <div className="form-group">
             <label>Type</label>
-            <select className="input" value={newNodeType} onChange={e => setNewNodeType(e.target.value)}
-              style={{ fontSize: 12 }}>
+            <select className="input" value={newNodeType} onChange={e => setNewNodeType(e.target.value)} style={{ fontSize: 12 }}>
               <option value="master">👑 Master</option>
               <option value="slave">🔹 Slave</option>
               <option value="follower">🔸 Follower</option>
@@ -236,33 +195,27 @@ export default function RelayNodes() {
           </div>
           <div className="form-group">
             <label>Region</label>
-            <select className="input" value={newNodeRegion} onChange={e => setNewNodeRegion(e.target.value)}
-              style={{ fontSize: 12 }}>
+            <select className="input" value={newNodeRegion} onChange={e => setNewNodeRegion(e.target.value)} style={{ fontSize: 12 }}>
               {REGIONS.map(r => <option key={r} value={r}>{r}</option>)}
             </select>
           </div>
           <div className="form-group" style={{ justifyContent: 'flex-end' }}>
-            <button className="btn btn-success" onClick={addNode}
-              style={{ fontSize: 11, padding: '8px 16px', marginTop: 22 }}>
-              ➕ Add
-            </button>
+            <button className="btn btn-success" onClick={handleAddNode} style={{ fontSize: 11, padding: '8px 16px', marginTop: 22 }}>➕ Add</button>
           </div>
         </div>
       </div>
 
       {/* Node List */}
       <div className="config-panel">
-        <h3>🗼 Relay Nodes</h3>
+        <h3>🗼 Relay Nodes ({nodes.length})</h3>
         <div className="relay-node-grid">
-          {nodes.map((node, i) => (
-            <div key={node.id} className={`relay-node-card ${node.status}`}>
+          {nodes.map(node => (
+            <div key={node.id} className={'relay-node-card' + (node.status !== 'active' ? ' ' + node.status : '')}>
               <div className="relay-node-header">
-                <span className={`relay-node-dot ${node.status}`} />
+                <span className={'relay-node-dot ' + node.status} />
                 <strong className="relay-node-name">{node.name}</strong>
-                <span className={`relay-node-type ${node.type}`}>
-                  {node.type === 'master' ? '👑' : node.type === 'slave' ? '🔹' : '🔸'}
-                </span>
-                <button className="peer-remove" onClick={() => removeNode(node.id)} title="Remove">✕</button>
+                <span>{node.type === 'master' ? '👑' : node.type === 'slave' ? '🔹' : '🔸'}</span>
+                <button className="peer-remove" onClick={() => handleRemoveNode(node.id)} title="Remove">✕</button>
               </div>
               <div className="relay-node-addr">{node.ip}:{node.port} · {node.region}</div>
               <div className="relay-node-stats">
@@ -275,14 +228,10 @@ export default function RelayNodes() {
                 <span>📈 Uptime: {node.uptime}</span>
               </div>
               <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
-                <div className={`relay-node-status-badge ${node.status}`}>
+                <div className={'relay-node-status-badge ' + node.status}>
                   {node.status === 'active' ? '🟢 Active' : node.status === 'degraded' ? '🟡 Degraded' : '🔴 Offline'}
                 </div>
-                <button
-                  className={`btn ${node.status === 'active' ? 'btn-danger' : 'btn-success'}`}
-                  onClick={() => toggleNodeStatus(node.id)}
-                  style={{ fontSize: 10, padding: '3px 8px', marginLeft: 'auto' }}
-                >
+                <button className={'btn ' + (node.status === 'active' ? 'btn-danger' : 'btn-success')} onClick={() => handleToggleStatus(node.id)} style={{ fontSize: 10, padding: '3px 8px', marginLeft: 'auto' }}>
                   {node.status === 'active' ? '⏹ Stop' : '▶ Start'}
                 </button>
               </div>
@@ -291,15 +240,13 @@ export default function RelayNodes() {
         </div>
       </div>
 
-      {/* Withdraw Funds */}
+      {/* Withdraw */}
       <div className="config-panel">
-        <h3>💸 Withdraw to Custom Address</h3>
+        <h3>💸 Withdraw Funds</h3>
         <div className="form-grid" style={{ gridTemplateColumns: '2fr 1fr auto' }}>
           <div className="form-group">
             <label>Target Address</label>
-            <input type="text" className="input mono" value={withdrawTarget}
-              onChange={e => setWithdrawTarget(e.target.value)}
-              placeholder="0x..." style={{ fontSize: 12 }} />
+            <input type="text" className="input mono" value={withdrawTarget} onChange={e => setWithdrawTarget(e.target.value)} placeholder="0x..." style={{ fontSize: 12 }} />
             <span className="form-hint">All node balances will be sent to this address</span>
           </div>
           <div className="form-group">
@@ -309,43 +256,35 @@ export default function RelayNodes() {
             </div>
           </div>
           <div className="form-group" style={{ justifyContent: 'flex-end' }}>
-            <button className="btn btn-primary" onClick={handleWithdraw}
-              disabled={withdrawing || totalBalance <= 0}
-              style={{ fontSize: 12, padding: '10px 20px', marginTop: 22 }}>
+            <button className="btn btn-primary" onClick={handleWithdraw} disabled={withdrawing || totalBalance <= 0} style={{ fontSize: 12, padding: '10px 20px', marginTop: 22 }}>
               {withdrawing ? '⏳ Withdrawing...' : '💸 Withdraw All'}
             </button>
           </div>
         </div>
       </div>
 
-      {/* Network Configuration */}
+      {/* Network Config */}
       <div className="config-panel">
         <h3>⚙️ Network Configuration</h3>
         <div className="form-grid" style={{ gridTemplateColumns: '1fr 1fr 1fr' }}>
           <div className="form-group">
             <label>Heartbeat Interval</label>
-            <input type="number" className="input" value={networkConfig.heartbeatInterval}
-              onChange={e => setNetworkConfig(prev => ({ ...prev, heartbeatInterval: Number(e.target.value) }))}
-              min={5} max={300} />
+            <input type="number" className="input" value={networkConfig.heartbeatInterval} onChange={e => setNetworkConfig(p => ({ ...p, heartbeatInterval: Number(e.target.value) }))} min={5} max={300} />
             <span className="form-hint">Seconds between heartbeats</span>
           </div>
           <div className="form-group">
             <label>Failover Threshold</label>
-            <input type="number" className="input" value={networkConfig.failoverThreshold}
-              onChange={e => setNetworkConfig(prev => ({ ...prev, failoverThreshold: Number(e.target.value) }))}
-              min={1} max={10} />
+            <input type="number" className="input" value={networkConfig.failoverThreshold} onChange={e => setNetworkConfig(p => ({ ...p, failoverThreshold: Number(e.target.value) }))} min={1} max={10} />
             <span className="form-hint">Failed heartbeats before failover</span>
           </div>
           <div className="form-group">
             <label>&nbsp;</label>
             <label className="checkbox-label" style={{ fontWeight: 500, textTransform: 'none' }}>
-              <input type="checkbox" checked={networkConfig.rebalanceEnabled}
-                onChange={e => setNetworkConfig(prev => ({ ...prev, rebalanceEnabled: e.target.checked }))} />
+              <input type="checkbox" checked={networkConfig.rebalanceEnabled} onChange={e => setNetworkConfig(p => ({ ...p, rebalanceEnabled: e.target.checked }))} />
               Auto-rebalance
             </label>
             <label className="checkbox-label" style={{ fontWeight: 500, textTransform: 'none' }}>
-              <input type="checkbox" checked={networkConfig.autoDiscovery}
-                onChange={e => setNetworkConfig(prev => ({ ...prev, autoDiscovery: e.target.checked }))} />
+              <input type="checkbox" checked={networkConfig.autoDiscovery} onChange={e => setNetworkConfig(p => ({ ...p, autoDiscovery: e.target.checked }))} />
               Auto-discovery
             </label>
           </div>
@@ -355,10 +294,13 @@ export default function RelayNodes() {
       {/* Activity Log */}
       {logs.length > 0 && (
         <div className="log-panel">
-          <h3>📋 Activity Log</h3>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+            <h3 style={{ margin: 0 }}>📋 Activity Log</h3>
+            <button className="btn btn-secondary" onClick={() => setLogs([])} style={{ fontSize: 10, padding: '4px 10px' }}>Clear</button>
+          </div>
           <div className="log-container">
             {logs.map((log, i) => (
-              <div key={i} className={`log-entry ${log.type}`}>
+              <div key={i} className={'log-entry ' + log.type}>
                 <span className="log-time">{log.time}</span>
                 <span className="log-msg">{log.msg}</span>
               </div>
