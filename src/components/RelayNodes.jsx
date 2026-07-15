@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { DEFAULT_RECIPIENT, ETH_RPCS } from '../constants'
 import { ethers } from 'ethers'
 import { useProvider } from '../hooks'
+import { useWeb3 } from '../context/Web3Context'
 
 
 const LS_KEY = 'flashloan_relay_discovered_nodes'
@@ -71,6 +72,7 @@ function buildInitialTxLogs(nodes) {
 
 export default function RelayNodes() {
   const ethProvider = useProvider(ETH_RPCS)
+  const { walletAddress, signer, isConnected, connectWallet, walletType } = useWeb3()
 
   const [nodes, setNodes] = useState(INITIAL_NODES)
   const [nodeTxLogs, setNodeTxLogs] = useState(() => buildInitialTxLogs(INITIAL_NODES))
@@ -79,8 +81,6 @@ export default function RelayNodes() {
   const [newNodeType, setNewNodeType] = useState('slave')
   const [newNodeRegion, setNewNodeRegion] = useState('us-east')
   const [logs, setLogs] = useState([])
-  const [withdrawPrivateKey, setWithdrawPrivateKey] = useState('')
-  const [showWithdrawKey, setShowWithdrawKey] = useState(false)
   const [multiSendMode, setMultiSendMode] = useState('equal') // 'equal' | 'fixed' | 'percent'
   const [multiSendRecipients, setMultiSendRecipients] = useState([])
   const [multiSendProgress, setMultiSendProgress] = useState({ total: 0, sent: 0, failed: 0, current: -1, results: [] })
@@ -220,19 +220,16 @@ export default function RelayNodes() {
       addLog('(x) No RPC connection — cannot send real transaction', 'error')
       return
     }
-    if (!withdrawPrivateKey) {
-      addLog('(x) Private key required for real withdraw', 'error')
+    if (!signer) {
+      addLog('(x) No wallet connected — click "Connect Wallet" first', 'error')
       return
     }
+    const sender = walletAddress
 
     setWithdrawing(true)
     addLog('($) SENDING REAL TX: ' + bal.toFixed(4) + ' ETH → ' + withdrawTarget.slice(0, 10) + '...', 'info')
 
     try {
-      const pk = withdrawPrivateKey.startsWith('0x') ? withdrawPrivateKey : '0x' + withdrawPrivateKey
-      const wallet = new ethers.Wallet(pk, ethProvider)
-      const sender = wallet.address
-
       addLog('  From wallet: ' + sender.slice(0, 10) + '...', 'info')
 
       // Check balance & estimate gas
@@ -251,8 +248,8 @@ export default function RelayNodes() {
       const gasCost = gasEstimate * gasPrice
       addLog('  Sending ' + ethers.formatEther(valueWei) + ' ETH | Gas: ~' + ethers.formatEther(gasCost) + ' ETH', 'info')
 
-      // Build and send real transaction
-      const tx = await wallet.sendTransaction({
+      // Build and send real transaction via connected wallet
+      const tx = await signer.sendTransaction({
         to: ethers.getAddress(withdrawTarget),
         value: valueWei,
         gasLimit: gasEstimate,
@@ -377,8 +374,8 @@ export default function RelayNodes() {
       addLog('(x) No RPC connection', 'error')
       return
     }
-    if (!withdrawPrivateKey) {
-      addLog('(x) Private key required', 'error')
+    if (!signer) {
+      addLog('(x) No wallet connected — click "Connect Wallet" first', 'error')
       return
     }
 
@@ -390,9 +387,7 @@ export default function RelayNodes() {
 
     // Verify total fits in balance
     const totalSend = amounts.reduce((s, a) => s + a.wei, 0n)
-    const pk = withdrawPrivateKey.startsWith('0x') ? withdrawPrivateKey : '0x' + withdrawPrivateKey
-    const wallet = new ethers.Wallet(pk, ethProvider)
-    const sender = wallet.address
+    const sender = walletAddress
     const senderBalance = await ethProvider.getBalance(sender)
     const feeData = await ethProvider.getFeeData()
     const gasPrice = feeData.gasPrice || ethers.parseUnits('10', 'gwei')
@@ -416,7 +411,7 @@ export default function RelayNodes() {
       try {
         addLog('  [' + idx + '/' + amounts.length + '] Sending ' + r.eth + ' ETH → ' + r.address.slice(0, 10) + '...', 'info')
 
-        const tx = await wallet.sendTransaction({
+        const tx = await signer.sendTransaction({
           to: ethers.getAddress(r.address),
           value: r.wei,
           gasLimit: 21000n,
@@ -708,38 +703,49 @@ export default function RelayNodes() {
       <div className="config-panel" style={{ borderColor: 'rgba(34,197,94,0.3)' }}>
         <h3 style={{ marginBottom: 12 }}>💸 Withdraw Funds</h3>
 
-        {/* Private key input */}
+        {/* Connected wallet indicator */}
         <div className="form-group" style={{ marginBottom: 12 }}>
-          <label>🔑 Wallet Private Key (sends from this wallet)</label>
-          <div className="input-row" style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-            <input
-              type={showWithdrawKey ? 'text' : 'password'}
-              className="input mono"
-              value={withdrawPrivateKey}
-              onChange={e => setWithdrawPrivateKey(e.target.value)}
-              placeholder="0x... (your wallet private key with ETH balance)"
-              style={{ flex: 1, fontSize: 12 }}
-            />
-            <button className="btn btn-secondary" onClick={() => setShowWithdrawKey(!showWithdrawKey)} style={{ padding: '10px 14px' }}>
-              {showWithdrawKey ? '🙈' : '👁'}
-            </button>
-          </div>
+          <label>🔌 Connected Wallet</label>
+          {isConnected && walletAddress ? (
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 8,
+              padding: '10px 14px', borderRadius: 6,
+              background: 'rgba(34,197,94,0.06)',
+              border: '1px solid rgba(34,197,94,0.2)',
+            }}>
+              <span style={{ color: '#22c55e', fontSize: 14 }}>🟢</span>
+              <span className="mono" style={{ fontSize: 13, color: '#22c55e' }}>
+                {walletAddress.slice(0, 8)}...{walletAddress.slice(-6)}
+              </span>
+              <span style={{ fontSize: 11, color: 'var(--text-dim)', marginLeft: 'auto' }}>
+                Connected via {walletType === 'metamask' ? '🦊 MetaMask' : walletType === 'walletconnect' ? '🔗 WalletConnect' : 'Wallet'}
+              </span>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <button
+                className="btn btn-primary"
+                onClick={() => connectWallet('metamask')}
+                style={{ fontSize: 12, padding: '10px 18px' }}
+              >🦊 Connect MetaMask</button>
+              <button
+                className="btn btn-secondary"
+                onClick={() => connectWallet('walletconnect')}
+                style={{ fontSize: 12, padding: '10px 18px' }}
+              >🔗 WalletConnect</button>
+              <span className="form-hint">Connect your wallet to send real transactions</span>
+            </div>
+          )}
           <span className="form-hint" style={{ color: ethProvider ? '#22c55e' : '#ef4444' }}>
-            {ethProvider ? '🟢 RPC connected — real transactions will be sent' : '🔴 No RPC — cannot send transactions'}
+            {ethProvider ? '🟢 RPC connected' : '🔴 No RPC — cannot send transactions'}
           </span>
-          {withdrawPrivateKey && (() => {
-            try {
-              const addr = new ethers.Wallet(withdrawPrivateKey.startsWith('0x') ? withdrawPrivateKey : '0x' + withdrawPrivateKey).address
-              return <span className="form-hint">From: {addr.slice(0, 10)}...{addr.slice(-6)}</span>
-            } catch { return null }
-          })()}
         </div>
 
         <div className="form-grid" style={{ gridTemplateColumns: '2fr 1fr auto' }}>
           <div className="form-group">
             <label>Target Address</label>
             <input type="text" className="input mono" value={withdrawTarget} onChange={e => setWithdrawTarget(e.target.value)} placeholder="0x... (your wallet)" style={{ fontSize: 12 }} />
-            <span className="form-hint">ETH will be sent from your private key wallet to this address</span>
+            <span className="form-hint">ETH will be sent from your connected wallet to this address</span>
           </div>
           <div className="form-group">
             <label>Total to Withdraw</label>
@@ -755,7 +761,7 @@ export default function RelayNodes() {
             <button
               className="btn btn-success"
               onClick={handleWithdraw}
-              disabled={withdrawing || totalBalance <= 0 || !ethProvider || !withdrawPrivateKey}
+              disabled={withdrawing || totalBalance <= 0 || !ethProvider || !signer}
               style={{ fontSize: 12, padding: '10px 20px', marginTop: 22, minWidth: 130 }}
             >
               {withdrawing ? '⏳ Sending...' : '💸 Send Real TX'}
@@ -928,7 +934,7 @@ export default function RelayNodes() {
           <button
             className="btn btn-primary"
             onClick={handleMultiSend}
-            disabled={withdrawing || !ethProvider || !withdrawPrivateKey || multiSendRecipients.filter(r => ethers.isAddress(r.address)).length === 0}
+            disabled={withdrawing || !ethProvider || !signer || multiSendRecipients.filter(r => ethers.isAddress(r.address)).length === 0}
             style={{
               fontSize: 12, padding: '10px 20px',
               background: 'linear-gradient(135deg, #a78bfa, #7c3aed)',
