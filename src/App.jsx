@@ -26,6 +26,7 @@ import { Web3Provider } from './context/Web3Context'
 import { SubscriptionProvider, useSubscription } from './context/SubscriptionContext'
 import AuthPage from './components/AuthPage'
 import ProtectedFeature from './components/ProtectedFeature'
+import ContractDeployer from './components/ContractDeployer'
 import SubscriptionPlans from './components/SubscriptionPlans'
 import AdminPanel from './components/AdminPanel'
 
@@ -95,12 +96,13 @@ const NAV_CATEGORIES = [
     ],
   },
   {
-    id: 'admin',
-    label: 'Admin',
-    icon: '⚙',
+    id: 'dev',
+    label: 'Developer',
+    icon: '🔧',
     tabs: [
       { id: 'subscription', label: 'Subscription', icon: '💳', desc: 'Plans & license key activation', badge: null },
       { id: 'admin-panel', label: 'Admin Panel', icon: '🛡️', desc: 'User & subscription management', badge: 'ADMIN' },
+      { id: 'contract-deployer', label: 'Contract Deployer', icon: '📦', desc: 'Deploy FlashArbitrage contracts', badge: 'DEV' },
     ],
   },
 ]
@@ -113,6 +115,7 @@ const BADGE_CLASSES = {
   ADV: 'badge-adv',
   PRIVATE: 'badge-private',
   ADMIN: 'badge-admin',
+  DEV: 'badge-dev',
 }
 
 const THEME_STORAGE_KEY = 'tokentoolkit_theme'
@@ -199,6 +202,7 @@ const TAB_RENDER_MAP = {
   'token-info':     () => <TokenInfo />,
   history:          () => <TransactionHistory />,
   subscription:     (p) => <SubscriptionPlans onNavigate={p.setActiveTab} />,
+  'contract-deployer': () => <ContractDeployer />,
   'admin-panel':    () => <AdminPanel />,
   auth:             (p) => <AuthPage onNavigate={p.setActiveTab} />,
 }

@@ -184,6 +184,12 @@ export default function ArbitrageDashboard() {
   const [autoScroll, setAutoScroll] = useState(true)
   const logEndRef = useRef(null)
 
+  // ─── State: Validator Bribe Config ────────────────────────────────────
+  const [validatorBribeBps, setValidatorBribeBps] = useState(10)
+  const [relayerRewardBps, setRelayerRewardBps] = useState(5)
+  const [bribeLoading, setBribeLoading] = useState(false)
+  const [bribeContractAddress, setBribeContractAddress] = useState('')
+
   // ─── State: Execution result ───────────────────────────────────────────
   const [lastResult, setLastResult] = useState(null)
 
@@ -659,7 +665,7 @@ export default function ArbitrageDashboard() {
     } catch (err) {
       addLog(`❌ Execution failed: ${err.message}`, 'error')
     }
-  }, [executionMode, executeViaBackend, executeDirect, addLog])
+  }, [executionMode, executeViaBackendREST, executeDirect, addLog])
 
   // ─── Auto-Trading Bot ─────────────────────────────────────────────────
   const autoBotLoop = useCallback(async () => {
@@ -760,6 +766,61 @@ export default function ArbitrageDashboard() {
     }
     return () => { botRef.current = false }
   }, [botRunning, executionMode, autoBotLoop])
+
+  // ─── Handle Set Bribes on Contract ────────────────────────────────────
+  const handleSetBribes = useCallback(async () => {
+    if (!walletSigner || !isConnected) {
+      addLog('(x) Connect your owner wallet first', 'error')
+      return
+    }
+    if (!bribeContractAddress || !ethers.isAddress(bribeContractAddress)) {
+      addLog('(x) Enter a valid FlashArbitrage contract address in the Bribe Config', 'error')
+      return
+    }
+
+    const MINIMAL_OWNER_ABI = [
+      'function setValidatorBribe(uint256 _bps) external',
+      'function setRelayerReward(uint256 _bps) external',
+      'function validatorBribeBps() view returns (uint256)',
+      'function relayerRewardBps() view returns (uint256)',
+    ]
+
+    setBribeLoading(true)
+    try {
+      const contractAddr = ethers.getAddress(bribeContractAddress)
+      const contract = new ethers.Contract(contractAddr, MINIMAL_OWNER_ABI, walletSigner)
+
+      addLog(`Setting validator bribe to ${validatorBribeBps} bps (${(validatorBribeBps/100).toFixed(2)}%)...`, 'info')
+      const tx1 = await contract.setValidatorBribe(validatorBribeBps, {
+        gasLimit: 100000n,
+      })
+      addLog(`  Tx1 sent: ${tx1.hash.slice(0, 18)}...`, 'success')
+      await tx1.wait()
+      addLog('  ✅ Validator bribe set!', 'profit')
+
+      addLog(`Setting relayer reward to ${relayerRewardBps} bps (${(relayerRewardBps/100).toFixed(2)}%)...`, 'info')
+      const tx2 = await contract.setRelayerReward(relayerRewardBps, {
+        gasLimit: 100000n,
+      })
+      addLog(`  Tx2 sent: ${tx2.hash.slice(0, 18)}...`, 'success')
+      await tx2.wait()
+      addLog('  ✅ Relayer reward set!', 'profit')
+
+      addLog('(done) 🎯 Validator incentives configured successfully!', 'profit')
+
+      // Read back
+      try {
+        const readContract = new ethers.Contract(contractAddr, MINIMAL_OWNER_ABI, ethProvider)
+        const newValidatorBps = await readContract.validatorBribeBps()
+        const newRelayerBps = await readContract.relayerRewardBps()
+        addLog(`  On-chain: validator=${newValidatorBps}bps, relayer=${newRelayerBps}bps`, 'info')
+      } catch { /* skip readback */ }
+
+    } catch (err) {
+      addLog(`(x) Failed to set bribes: ${err.message}`, 'error')
+    }
+    setBribeLoading(false)
+  }, [walletSigner, isConnected, bribeContractAddress, validatorBribeBps, relayerRewardBps, ethProvider, addLog])
 
   // ─── Auto-scroll logs ─────────────────────────────────────────────────
   useEffect(() => {
@@ -958,6 +1019,109 @@ export default function ArbitrageDashboard() {
             <OpportunityRow key={`${opp.buyDex}-${opp.sellDex}-${i}`} opp={opp} index={i + 1} onExecute={handleExecute} />
           ))
         )}
+      </div>
+
+      {/* ═══ VALIDATOR BRIBE CONFIG ═════════════════════════════════════ */}
+      <div className="config-panel" style={{ borderColor: 'rgba(251,191,36,0.3)', marginBottom: 20 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+          <h3 style={{ margin: 0 }}>🎯 Validator Incentive Config</h3>
+          <span style={{ fontSize: 10, color: 'var(--text-dim)' }}>
+            Set bribe/reward percentages on the FlashArbitrage contract
+          </span>
+        </div>
+
+        {/* Contract address input */}
+        <div className="form-group" style={{ marginBottom: 12 }}>
+          <label>📜 FlashArbitrage Contract Address</label>
+          <input
+            type="text"
+            className="input mono"
+            value={bribeContractAddress}
+            onChange={e => setBribeContractAddress(e.target.value)}
+            placeholder="0x..."
+            style={{ fontSize: 12 }}
+          />
+          <span className="form-hint">Must be the contract owner to call setValidatorBribe / setRelayerReward</span>
+        </div>
+
+        <div className="form-grid" style={{ gridTemplateColumns: '1fr 1fr auto' }}>
+          {/* Validator Bribe */}
+          <div className="form-group">
+            <label>Validator Bribe</label>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <input
+                type="range"
+                min={0} max={100} step={1}
+                value={validatorBribeBps}
+                onChange={e => setValidatorBribeBps(Number(e.target.value))}
+                style={{ flex: 1, accentColor: '#fbbf24' }}
+              />
+              <span style={{
+                minWidth: 60, textAlign: 'right',
+                fontSize: 14, fontWeight: 700, color: '#fbbf24',
+                fontFamily: 'monospace',
+              }}>
+                {(validatorBribeBps / 100).toFixed(2)}%
+              </span>
+            </div>
+            <span className="form-hint">
+              {validatorBribeBps} bps — sent to block.coinbase on each arbitrage
+            </span>
+          </div>
+
+          {/* Relayer Reward */}
+          <div className="form-group">
+            <label>Relayer Reward</label>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <input
+                type="range"
+                min={0} max={50} step={1}
+                value={relayerRewardBps}
+                onChange={e => setRelayerRewardBps(Number(e.target.value))}
+                style={{ flex: 1, accentColor: '#a78bfa' }}
+              />
+              <span style={{
+                minWidth: 60, textAlign: 'right',
+                fontSize: 14, fontWeight: 700, color: '#a78bfa',
+                fontFamily: 'monospace',
+              }}>
+                {(relayerRewardBps / 100).toFixed(2)}%
+              </span>
+            </div>
+            <span className="form-hint">
+              {relayerRewardBps} bps — paid to EIP-2771 forwarder relayer
+            </span>
+          </div>
+
+          {/* Set button */}
+          <div className="form-group" style={{ justifyContent: 'flex-end' }}>
+            <LoadingButton
+              loading={bribeLoading}
+              loadingText="⏳"
+              onClick={handleSetBribes}
+              disabled={!isConnected || !walletAddress || !ethProvider}
+              style={{ fontSize: 12, padding: '10px 20px', marginTop: 22 }}
+            >
+              {isConnected ? '⚡ Set on Contract' : '🦊 Connect Wallet First'}
+            </LoadingButton>
+          </div>
+        </div>
+
+        {/* Current bribe display */}
+        <div style={{
+          marginTop: 8, padding: '8px 12px', borderRadius: 6,
+          background: 'rgba(251,191,36,0.04)',
+          border: '1px solid rgba(251,191,36,0.1)',
+          fontSize: 11, color: '#a3a3a3',
+        }}>
+          <strong style={{ color: '#fbbf24' }}>How validator incentives work</strong>
+          <ul style={{ margin: '4px 0 0 16px', lineHeight: 1.6 }}>
+            <li>The validator bribe is paid to <code>block.coinbase</code> (the block proposer) as an on-chain incentive for including your arbitrage transaction</li>
+            <li>The relayer reward is paid to the EIP-2771 trusted forwarder for submitting meta-transactions</li>
+            <li>Both are deducted from the arbitrage profit <strong>after</strong> the flash loan premium but <strong>before</strong> the operator profit</li>
+            <li>Calling <code>setValidatorBribe(bps)</code> and <code>setRelayerReward(bps)</code> on the FlashArbitrage contract requires ownership</li>
+          </ul>
+        </div>
       </div>
 
       {/* ═══ LAST RESULT ═══════════════════════════════════════════════════ */}
