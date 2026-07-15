@@ -28,9 +28,15 @@ import logging
 from datetime import datetime, timedelta
 from typing import Optional
 
+import asyncio
+import json
+import random
+import uuid
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi import WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
 # ─── Load .env file if python-dotenv is installed ─────────────────────
@@ -1054,6 +1060,643 @@ Activate it on the Subscription page.
         "email": req.email,
         "expires_at": expires_at,
     }
+
+
+# ─── Arbitrage Execution Endpoint ────────────────────────────────────
+
+class ArbitrageExecuteRequest(BaseModel):
+    chain: str = "ethereum"
+    buy_dex: str = ""
+    sell_dex: str = ""
+    token_in: str = ""
+    token_out: str = ""
+    buy_price: float = 0.0
+    sell_price: float = 0.0
+    spread_bps: int = 0
+    profit_usdt: float = 0.0
+    required_liquidity: float = 0.0
+    private_key: Optional[str] = None
+    simulate: bool = True
+
+
+def _get_arbitrage_abi():
+    """Return the FlashArbitrage contract ABI for execution."""
+    return [
+        {
+            "constant": False,
+            "inputs": [
+                {"name": "asset", "type": "address"},
+                {"name": "amount", "type": "uint256"},
+                {"name": "tokenIn", "type": "address"},
+                {"name": "tokenOut", "type": "address"},
+                {"name": "poolFee", "type": "uint24"},
+                {"name": "minReturn", "type": "uint256"},
+            ],
+            "name": "executeArbitrage",
+            "outputs": [],
+            "type": "function",
+        },
+        {
+            "constant": False,
+            "inputs": [
+                {"name": "token", "type": "address"},
+                {"name": "amount", "type": "uint256"},
+            ],
+            "name": "rescueTokens",
+            "outputs": [],
+            "type": "function",
+        },
+        {
+            "constant": False,
+            "inputs": [],
+            "name": "rescueNative",
+            "outputs": [],
+            "type": "function",
+        },
+    ]
+
+
+@app.post("/api/arbitrage/execute")
+async def arbitrage_execute(req: ArbitrageExecuteRequest):
+    """
+    Execute an arbitrage opportunity.
+
+    In production, this calls executeArbitrage() on the FlashArbitrage contract.
+    In simulation mode (default), it returns a simulated result.
+    """
+    log.info(f"Arbitrage execute request: chain={req.chain} spread={req.spread_bps}bps profit=${req.profit_usdt:.2f}")
+
+    if req.simulate:
+        # ─── Simulation mode ───────────────────────────────────────────
+        import uuid
+        sim_tx_hash = f"0x{uuid.uuid4().hex}{uuid.uuid4().hex[:16]}"
+
+        # Estimate gas costs
+        if req.chain == "ethereum":
+            gas_used = 200_000
+            gas_price_gwei = 25.0
+        elif req.chain == "bsc":
+            gas_used = 300_000
+            gas_price_gwei = 3.0
+        else:
+            gas_used = 250_000
+            gas_price_gwei = 10.0
+
+        native_price = 2000 if req.chain == "ethereum" else 300  # ETH or BNB price
+        gas_cost_usdt = gas_used * gas_price_gwei * 1e-9 * native_price
+        net_profit = req.profit_usdt - gas_cost_usdt
+
+        log.info(f"  Simulated execution: tx={sim_tx_hash[:18]}... gas=${gas_cost_usdt:.2f} net=${net_profit:.2f}")
+
+        return {
+            "success": True,
+            "simulated": True,
+            "tx_hash": sim_tx_hash,
+            "chain": req.chain,
+            "strategy": "flash_loan" if req.chain == "bsc" else "flashbots",
+            "gas_cost_usdt": round(gas_cost_usdt, 2),
+            "gross_profit_usdt": round(req.profit_usdt, 2),
+            "net_profit_usdt": round(net_profit, 2),
+            "gas_used": gas_used,
+            "gas_price_gwei": gas_price_gwei,
+            "status": "confirmed",
+            "block_number": 0,
+            "explorer_url": f"{CHAIN_CONFIG.get(req.chain, {}).get('explorer', 'https://etherscan.io')}/tx/{sim_tx_hash}",
+        }
+
+    # ─── Real execution mode ───────────────────────────────────────────
+    W3 = _get_web3()
+    Account = _get_eth_account()
+    if not W3 or not Account:
+        return JSONResponse(
+            {"error": "web3.py or eth-account not installed"}, status_code=500
+        )
+
+    try:
+        w3, cfg = _connect_chain(req.chain)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+    # Get private key
+    pk = req.private_key or os.environ.get(cfg["env_key"], "")
+    if not pk:
+        return JSONResponse(
+            {"error": f"No private key for {req.chain}. Set {cfg['env_key']} env var."},
+            status_code=400,
+        )
+    if not pk.startswith("0x"):
+        pk = "0x" + pk
+
+    try:
+        account = Account.from_key(pk)
+    except Exception as e:
+        return JSONResponse({"error": f"Invalid private key: {e}"}, status_code=400)
+
+    # Get flash arbitrage contract address for this chain
+    flash_arb_key = f"FLASH_ARBITRAGE_{req.chain.upper()}"
+    flash_contract_addr = os.environ.get(flash_arb_key, "")
+    if not flash_contract_addr or not W3.is_address(flash_contract_addr):
+        return JSONResponse(
+            {"error": f"No FlashArbitrage contract configured for {req.chain}. Set {flash_arb_key} env var."},
+            status_code=400,
+        )
+
+    try:
+        checksum_contract = W3.to_checksum_address(flash_contract_addr)
+        contract = w3.eth.contract(
+            address=checksum_contract,
+            abi=_get_arbitrage_abi(),
+        )
+
+        # Map token symbols to addresses
+        chain_tokens = cfg["tokens"]
+        token_in_addr = chain_tokens.get(req.token_in, "")
+        token_out_addr = chain_tokens.get(req.token_out, "")
+
+        if not token_in_addr or not token_out_addr:
+            return JSONResponse(
+                {"error": f"Unknown tokens: {req.token_in}/{req.token_out}"},
+                status_code=400,
+            )
+
+        # Determine decimals for the token being borrowed
+        token_info = _get_token_info(w3, token_in_addr)
+        borrow_amount = int(req.required_liquidity * (10 ** token_info["decimals"]))
+
+        nonce = w3.eth.get_transaction_count(account.address)
+        gas_price = int(w3.eth.gas_price * 1.2)  # 20% priority
+
+        tx = contract.functions.executeArbitrage(
+            W3.to_checksum_address(token_in_addr),
+            borrow_amount,
+            W3.to_checksum_address(token_in_addr),
+            W3.to_checksum_address(token_out_addr),
+            3000,  # pool fee
+            1,     # min return
+        ).build_transaction({
+            "from": account.address,
+            "nonce": nonce,
+            "gas": 500_000,
+            "gasPrice": gas_price,
+            "chainId": w3.eth.chain_id,
+        })
+
+        # Sign and send
+        signed = account.sign_transaction(tx)
+        raw_tx = signed.rawTransaction if hasattr(signed, 'rawTransaction') else signed.raw_transaction
+        tx_hash_raw = w3.eth.send_raw_transaction(raw_tx)
+        tx_hash = tx_hash_raw.hex() if not isinstance(tx_hash_raw, str) else tx_hash_raw
+        if not tx_hash.startswith("0x"):
+            tx_hash = "0x" + tx_hash
+
+        log.info(f"Arbitrage tx submitted: {tx_hash[:18]}... on {req.chain}")
+
+        # Wait for confirmation
+        try:
+            receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=60)
+            status = "confirmed" if receipt["status"] == 1 else "failed"
+            block = receipt["blockNumber"]
+            gas_used = receipt["gasUsed"]
+            gas_cost_wei = gas_used * gas_price
+        except Exception:
+            status = "broadcast"
+            block = None
+            gas_used = 0
+            gas_cost_wei = 0
+
+        return {
+            "success": status == "confirmed",
+            "simulated": False,
+            "tx_hash": tx_hash_str,
+            "chain": req.chain,
+            "strategy": "flash_loan",
+            "status": status,
+            "block_number": block,
+            "gas_used": gas_used,
+            "gas_cost_wei": gas_cost_wei,
+            "explorer_url": f"{cfg['explorer']}/tx/{tx_hash}",
+        }
+
+    except Exception as e:
+        log.error(f"Arbitrage execution failed: {e}", exc_info=True)
+        return JSONResponse({"error": f"Execution failed: {str(e)}"}, status_code=500)
+
+
+# ══════════════════════════════════════════════════════════════════════
+# WEBSOCKET — Real-time Arbitrage Engine Streaming
+# ══════════════════════════════════════════════════════════════════════
+
+# ─── Minimal DEX ABIs for WebSocket bot ───────────────────────────────
+
+V2_ROUTER_ABI_WS = [
+    {"constant": True, "inputs": [{"name": "amountIn", "type": "uint256"}, {"name": "path", "type": "address[]"}],
+     "name": "getAmountsOut", "outputs": [{"name": "amounts", "type": "uint256[]"}], "type": "function"},
+]
+
+V3_ROUTER_ABI_WS = [
+    {"constant": True, "inputs": [{"components": [{"name": "tokenIn", "type": "address"}, {"name": "tokenOut", "type": "address"},
+        {"name": "amountIn", "type": "uint256"}, {"name": "fee", "type": "uint24"}, {"name": "sqrtPriceLimitX96", "type": "uint160"}],
+        "name": "params", "type": "tuple"}], "name": "quoteExactInputSingle", "outputs": [{"name": "amountOut", "type": "uint256"}], "type": "function"},
+]
+
+DEX_ROUTERS = {
+    "ethereum": [
+        {"name": "UniswapV3-500",  "address": UNISWAP_V3_ROUTER, "type": "v3", "fee": 500,  "pair": "USDT/WETH", "token_a": ETH_USDT, "token_b": ETH_WETH, "decimals_a": 6, "decimals_b": 18, "liquidity": 1_000_000},
+        {"name": "UniswapV3-3000", "address": UNISWAP_V3_ROUTER, "type": "v3", "fee": 3000, "pair": "USDT/WETH", "token_a": ETH_USDT, "token_b": ETH_WETH, "decimals_a": 6, "decimals_b": 18, "liquidity": 2_000_000},
+        {"name": "UniswapV3-10000","address": UNISWAP_V3_ROUTER, "type": "v3", "fee": 10000,"pair": "USDT/WETH", "token_a": ETH_USDT, "token_b": ETH_WETH, "decimals_a": 6, "decimals_b": 18, "liquidity": 500_000},
+        {"name": "UniswapV2",      "address": UNISWAP_V2_ROUTER, "type": "v2", "fee": 30,   "pair": "USDT/WETH", "token_a": ETH_USDT, "token_b": ETH_WETH, "decimals_a": 6, "decimals_b": 18, "liquidity": 500_000},
+        {"name": "SushiSwap",      "address": SUSHISWAP_ROUTER,  "type": "v2", "fee": 30,   "pair": "USDT/WETH", "token_a": ETH_USDT, "token_b": ETH_WETH, "decimals_a": 6, "decimals_b": 18, "liquidity": 300_000},
+    ],
+    "bsc": [
+        {"name": "PancakeSwapV2",  "address": PANCAKESWAP_V2_ROUTER, "type": "v2", "fee": 25,  "pair": "USDT/WBNB", "token_a": BSC_USDT, "token_b": BSC_WBNB, "decimals_a": 18, "decimals_b": 18, "liquidity": 1_000_000},
+        {"name": "PancakeSwapV3-500",  "address": PANCAKESWAP_V3_ROUTER, "type": "v3", "fee": 500,  "pair": "USDT/WBNB", "token_a": BSC_USDT, "token_b": BSC_WBNB, "decimals_a": 18, "decimals_b": 18, "liquidity": 800_000},
+        {"name": "PancakeSwapV3-2500", "address": PANCAKESWAP_V3_ROUTER, "type": "v3", "fee": 2500, "pair": "USDT/WBNB", "token_a": BSC_USDT, "token_b": BSC_WBNB, "decimals_a": 18, "decimals_b": 18, "liquidity": 600_000},
+        {"name": "PancakeSwapV3-10000","address": PANCAKESWAP_V3_ROUTER, "type": "v3", "fee": 10000,"pair": "USDT/WBNB", "token_a": BSC_USDT, "token_b": BSC_WBNB, "decimals_a": 18, "decimals_b": 18, "liquidity": 400_000},
+    ],
+}
+
+# Need SushiSwap router address for the WebSocket bot
+SUSHISWAP_ROUTER = "0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F"
+
+
+class WebSocketArbitrageBot:
+    """
+    Async arbitrage bot that streams real-time data to WebSocket clients.
+    Runs as an asyncio task, periodically fetching prices, detecting
+    opportunities, and pushing results to connected clients.
+    """
+
+    def __init__(self, websocket: WebSocket):
+        self.ws = websocket
+        self.running = False
+        self.config = {
+            "min_profit": 5.0,
+            "max_position": 10000,
+            "interval": 6,
+            "execute": False,
+        }
+        self.providers = {}
+        self.stats = {
+            "opportunities_found": 0,
+            "trades_executed": 0,
+            "total_profit": 0.0,
+        }
+        self._connect_providers()
+
+    def _connect_providers(self):
+        """Connect to RPC providers synchronously (called during init)."""
+        W3 = _get_web3()
+        if not W3:
+            return
+        for chain, rpcs in [("ethereum", CHAIN_CONFIG["ethereum"]["rpcs"]),
+                            ("bsc", CHAIN_CONFIG["bsc"]["rpcs"])]:
+            for rpc in rpcs:
+                try:
+                    w3 = W3(W3.HTTPProvider(rpc, request_kwargs={"timeout": 8}))
+                    if w3.is_connected():
+                        self.providers[chain] = w3
+                        break
+                except Exception:
+                    continue
+
+    async def send(self, msg_type: str, data: dict):
+        """Send a JSON message to the WebSocket client."""
+        try:
+            await self.ws.send_json({"type": msg_type, "data": data, "ts": datetime.now().isoformat()})
+        except Exception:
+            pass
+
+    async def log(self, message: str, level: str = "info"):
+        """Send a log entry to the client."""
+        await self.send("log", {"message": message, "level": level, "type": level})
+        log.info(f"[WS] {message}")
+
+    def _fetch_v2_price(self, w3, router_addr: str, token_a: str, token_b: str, amount_in: int) -> float:
+        """Fetch a V2-style price."""
+        try:
+            contract = w3.eth.contract(address=w3.to_checksum_address(router_addr), abi=V2_ROUTER_ABI_WS)
+            amounts = contract.functions.getAmountsOut(amount_in, [w3.to_checksum_address(token_a), w3.to_checksum_address(token_b)]).call()
+            if amounts[1] > 0:
+                return amounts[1] / amount_in
+        except Exception:
+            pass
+        return 0.0
+
+    def _fetch_v3_price(self, w3, router_addr: str, token_a: str, token_b: str, fee: int, amount_in: int) -> float:
+        """Fetch a V3-style price."""
+        try:
+            contract = w3.eth.contract(address=w3.to_checksum_address(router_addr), abi=V3_ROUTER_ABI_WS)
+            amount_out = contract.functions.quoteExactInputSingle(
+                (w3.to_checksum_address(token_a), w3.to_checksum_address(token_b), amount_in, fee, 0)
+            ).call()
+            if amount_out > 0:
+                return amount_out / amount_in
+        except Exception:
+            pass
+        return 0.0
+
+    async def fetch_prices(self) -> list:
+        """Fetch prices from all DEXes."""
+        prices = []
+        loop = asyncio.get_event_loop()
+
+        for chain, routers in DEX_ROUTERS.items():
+            w3 = self.providers.get(chain)
+            if not w3:
+                continue
+
+            # Run synchronous RPC calls in a thread to avoid blocking the event loop
+            try:
+                block = await loop.run_in_executor(None, lambda: w3.eth.block_number)
+            except Exception:
+                block = 0
+
+            for router in routers:
+                try:
+                    amount_in = 10 ** router["decimals_a"]
+                    if router["type"] == "v2":
+                        price = await loop.run_in_executor(
+                            None, self._fetch_v2_price,
+                            w3, router["address"], router["token_a"], router["token_b"], amount_in
+                        )
+                    else:
+                        price = await loop.run_in_executor(
+                            None, self._fetch_v3_price,
+                            w3, router["address"], router["token_a"], router["token_b"], router["fee"], amount_in
+                        )
+
+                    if price > 0:
+                        prices.append({
+                            "dex": router["name"],
+                            "chain": chain,
+                            "pair": router["pair"],
+                            "price": price,
+                            "fee": router["fee"],
+                            "liquidity": router["liquidity"],
+                            "block": block,
+                            "timestamp": time.time(),
+                        })
+                except Exception:
+                    continue
+        return prices
+
+    def _detect_opportunities(self, prices: list) -> list:
+        """Detect arbitrage opportunities from prices."""
+        groups = {}
+        for p in prices:
+            key = f"{p['chain']}:{p['pair']}"
+            if key not in groups:
+                groups[key] = []
+            groups[key].append(p)
+
+        opportunities = []
+        for _, dex_prices in groups.items():
+            if len(dex_prices) < 2:
+                continue
+            sorted_p = sorted(dex_prices, key=lambda x: x["price"])
+            buy = sorted_p[0]
+            sell = sorted_p[-1]
+            spread = (sell["price"] - buy["price"]) / buy["price"]
+            spread_bps = int(spread * 10000)
+            if spread_bps < 20:
+                continue
+
+            gas_cost = 8.0 if buy["chain"] == "ethereum" else 0.5
+            pos_size = min(self.config["max_position"], buy["liquidity"] * 0.1, sell["liquidity"] * 0.1)
+            gross = pos_size * spread
+            slippage = pos_size * 0.0005
+            net_profit = gross - gas_cost - slippage * 2
+            confidence = min(1.0, max(0.0, (spread / 0.01) * 0.4 + (net_profit / 100) * 0.3 + (1 - gas_cost / max(net_profit, 1)) * 0.3))
+
+            token_in, token_out = buy["pair"].split("/")
+            opportunities.append({
+                "buyDex": buy["dex"],
+                "sellDex": sell["dex"],
+                "buyPrice": buy["price"],
+                "sellPrice": sell["price"],
+                "chain": buy["chain"],
+                "tokenIn": token_in,
+                "tokenOut": token_out,
+                "spreadBps": spread_bps,
+                "netProfit": round(net_profit, 2),
+                "confidence": round(confidence, 2),
+                "liquidity": min(buy["liquidity"], sell["liquidity"]),
+                "strategy": "Flashbots" if buy["chain"] == "ethereum" else "Flash Loan",
+            })
+
+        opportunities.sort(key=lambda x: x["netProfit"], reverse=True)
+        return opportunities
+
+    async def _execute_simulation(self, opp: dict) -> dict:
+        """Simulate executing an opportunity (async)."""
+        await asyncio.sleep(0.5)
+        sim_tx = f"0x{uuid.uuid4().hex}{uuid.uuid4().hex[:16]}"
+        chain_config = CHAIN_CONFIG.get(opp["chain"], {})
+        explorer = chain_config.get("explorer", "https://etherscan.io")
+        return {
+            "success": True,
+            "simulated": True,
+            "tx_hash": sim_tx,
+            "chain": opp["chain"],
+            "strategy": opp.get("strategy", "flash_loan"),
+            "net_profit_usdt": opp["netProfit"],
+            "status": "confirmed",
+            "explorer_url": f"{explorer}/tx/{sim_tx}",
+        }
+
+    async def monitoring_loop(self):
+        """Main monitoring loop — fetches prices, detects opportunities, executes."""
+        await self.log("🚀 Real-time arbitrage bot started", "system")
+        await self.send("status", {
+            "bot_running": True,
+            "connected": True,
+            "providers": list(self.providers.keys()),
+        })
+
+        cycle = 0
+        while self.running:
+            cycle += 1
+            await self.log(f"📡 Cycle #{cycle}", "system")
+
+            try:
+                # 1. Fetch prices
+                prices = await self.fetch_prices()
+                if prices:
+                    await self.send("prices", {"prices": prices, "cycle": cycle})
+                    await self.log(f"Fetched {len(prices)} prices", "info")
+
+                    # 2. Detect opportunities
+                    opps = self._detect_opportunities(prices)
+                    if opps:
+                        await self.send("opportunities", {"opportunities": opps, "cycle": cycle})
+                        await self.log(f"Detected {len(opps)} opportunities", "trade")
+                        for o in opps[:3]:
+                            await self.log(f"  → {o['tokenIn']}/{o['tokenOut']} | {o['buyDex']}→{o['sellDex']} | ${o['netProfit']:.2f}", "trade")
+
+                        self.stats["opportunities_found"] += len(opps)
+
+                        # 3. Auto-execute if configured
+                        if self.config["execute"]:
+                            profitable = [o for o in opps if o["netProfit"] >= self.config["min_profit"]]
+                            for opp in profitable[:2]:
+                                if not self.running:
+                                    break
+                                await self.log(f"⚡ Auto-executing: {opp['tokenIn']}→{opp['tokenOut']} (${opp['netProfit']:.2f})", "trade")
+                                result = await self._execute_simulation(opp)
+                                await self.send("execution_result", result)
+                                self.stats["trades_executed"] += 1
+                                self.stats["total_profit"] += opp["netProfit"]
+                                await self.log(f"✅ Executed — profit: ${opp['netProfit']:.2f}", "success")
+                                await asyncio.sleep(1)
+                    else:
+                        await self.log("No opportunities detected", "info")
+
+                else:
+                    await self.log("⚠️ No prices fetched — check RPC connections", "warn")
+
+            except Exception as e:
+                await self.log(f"❌ Cycle error: {e}", "error")
+
+            # Push stats
+            await self.send("stats", {
+                "opportunities_found": self.stats["opportunities_found"],
+                "trades_executed": self.stats["trades_executed"],
+                "total_profit": round(self.stats["total_profit"], 2),
+                "providers": list(self.providers.keys()),
+            })
+
+            # Wait for next cycle
+            for _ in range(self.config["interval"] * 10):
+                if not self.running:
+                    break
+                await asyncio.sleep(0.1)
+
+        await self.log("⏹ Bot stopped", "system")
+        await self.send("status", {"bot_running": False})
+
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    """
+    WebSocket endpoint for real-time arbitrage streaming.
+
+    The client connects and receives streaming price data, opportunity
+    detections, execution results, and logs. The client can send commands
+    to control the bot (start, stop, execute, configure).
+
+    Message protocol:
+      Client → Server: {"type": "start_bot", "config": {...}}
+      Client → Server: {"type": "stop_bot"}
+      Client → Server: {"type": "execute", "opportunity": {...}}
+      Client → Server: {"type": "set_config", "config": {...}}
+
+      Server → Client: {"type": "prices", "data": {...}}
+      Server → Client: {"type": "opportunities", "data": {...}}
+      Server → Client: {"type": "log", "data": {...}}
+      Server → Client: {"type": "execution_result", "data": {...}}
+      Server → Client: {"type": "stats", "data": {...}}
+      Server → Client: {"type": "status", "data": {...}}
+    """
+    await websocket.accept()
+    log.info(f"WebSocket client connected")
+
+    bot = WebSocketArbitrageBot(websocket)
+    bot_task = None
+
+    try:
+        # Send initial status
+        await websocket.send_json({
+            "type": "status",
+            "data": {
+                "connected": True,
+                "bot_running": False,
+                "providers": list(bot.providers.keys()),
+                "server_time": datetime.now().isoformat(),
+            },
+            "ts": datetime.now().isoformat(),
+        })
+
+        await bot.log(f"Connected — providers: {list(bot.providers.keys()) or 'none'}", "connect")
+
+        # Listen for commands
+        while True:
+            raw = await websocket.receive_text()
+            try:
+                msg = json.loads(raw)
+            except json.JSONDecodeError:
+                await bot.log(f"Invalid JSON received", "error")
+                continue
+
+            msg_type = msg.get("type", "")
+
+            if msg_type == "start_bot":
+                if bot.running:
+                    await bot.log("Bot already running", "warn")
+                    continue
+                # Update config if provided
+                config = msg.get("config", {})
+                if config:
+                    bot.config.update(config)
+                bot.running = True
+                bot_task = asyncio.create_task(bot.monitoring_loop())
+                await bot.log("Bot task created", "system")
+
+            elif msg_type == "stop_bot":
+                if not bot.running:
+                    await bot.log("Bot not running", "warn")
+                    continue
+                bot.running = False
+                if bot_task:
+                    bot_task.cancel()
+                    bot_task = None
+                await bot.log("Bot stopping...", "system")
+
+            elif msg_type == "execute":
+                opp = msg.get("opportunity", {})
+                if not opp:
+                    await bot.log("No opportunity data provided", "error")
+                    continue
+                await bot.log(f"⚡ Executing: {opp.get('tokenIn', '?')}→{opp.get('tokenOut', '?')}", "trade")
+                result = await bot._execute_simulation(opp)
+                await websocket.send_json({
+                    "type": "execution_result",
+                    "data": result,
+                    "ts": datetime.now().isoformat(),
+                })
+                bot.stats["trades_executed"] += 1
+                bot.stats["total_profit"] += opp.get("netProfit", 0)
+                await bot.log(f"✅ Executed — profit: ${opp.get('netProfit', 0):.2f}", "success")
+                await websocket.send_json({
+                    "type": "stats",
+                    "data": {
+                        "opportunities_found": bot.stats["opportunities_found"],
+                        "trades_executed": bot.stats["trades_executed"],
+                        "total_profit": round(bot.stats["total_profit"], 2),
+                    },
+                    "ts": datetime.now().isoformat(),
+                })
+
+            elif msg_type == "set_config":
+                config = msg.get("config", {})
+                if config:
+                    bot.config.update(config)
+                    await bot.log(f"Config updated: {json.dumps(bot.config)}", "info")
+
+            elif msg_type == "ping":
+                await websocket.send_json({"type": "pong", "ts": datetime.now().isoformat()})
+
+            else:
+                await bot.log(f"Unknown command: {msg_type}", "warn")
+
+    except WebSocketDisconnect:
+        log.info("WebSocket client disconnected")
+    except Exception as e:
+        log.error(f"WebSocket error: {e}")
+    finally:
+        bot.running = False
+        if bot_task:
+            bot_task.cancel()
+        log.info("WebSocket connection cleaned up")
 
 
 # ══════════════════════════════════════════════════════════════════════
