@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import { DEFAULT_RECIPIENT } from '../constants'
 import { ethers } from 'ethers'
 
+const LS_KEY = 'flashloan_relay_discovered_nodes'
 const REGIONS = ['us-east', 'eu-west', 'ap-southeast', 'us-west', 'eu-central', 'sa-east', 'me-central']
 
 function randomIp() {
@@ -74,6 +75,13 @@ export default function RelayNodes() {
   const [newNodeType, setNewNodeType] = useState('slave')
   const [newNodeRegion, setNewNodeRegion] = useState('us-east')
   const [logs, setLogs] = useState([])
+
+  // ─── Persist nodes to localStorage for Gasless Relay to discover ──────
+  useEffect(() => {
+    try {
+      localStorage.setItem(LS_KEY, JSON.stringify(nodes))
+    } catch { /* storage full */ }
+  }, [nodes])
   const [networkConfig, setNetworkConfig] = useState({ heartbeatInterval: 30, failoverThreshold: 3, rebalanceEnabled: true, autoDiscovery: true })
   const [withdrawTarget, setWithdrawTarget] = useState(DEFAULT_RECIPIENT)
   const [withdrawing, setWithdrawing] = useState(false)

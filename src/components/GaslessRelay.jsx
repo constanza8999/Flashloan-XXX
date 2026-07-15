@@ -20,6 +20,45 @@ const FORWARDER_ABI = [
   'function relayers(address) view returns (bool)',
 ]
 
+// ─── Shared localStorage keys for cross-component discovery ───────────
+const LS_KEY_P2P_PEERS = 'flashloan_p2p_peers'
+const LS_KEY_RELAY_NODES = 'flashloan_relay_discovered_nodes'
+const LS_KEY_DISCOVERED = 'flashloan_gasless_discovered'
+
+// ─── Sample relay node addresses for auto-discovery generation ──────────
+const SAMPLE_RELAY_ADDRESSES = [
+  '0x70997970C51812dc3A010C7d01b50e0d17dc79C8',
+  '0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC',
+  '0x90F79bf6EB2c4f870365E785982E1f101E93b906',
+  '0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65',
+  '0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc',
+  '0x976EA74026E726554dB337f4B1e23B5bA3b7c43d',
+  '0x14dC79964da2C08b23698B3D3cc7Ca32193d9955',
+  '0x23618e81E3f5dfE7d1a3C3B3aEa8e6c6b5e3f7a1',
+  '0x8Ab0F264B78C90D7FBcB510F8eD8c1d9E5f3B2a7',
+  '0x4B20993Bc481177ec7E8f571ceCaE8A9e22C02db',
+]
+
+const SAMPLE_RELAY_NAMES = [
+  'relay-node-ams', 'relay-node-fra', 'relay-node-lon',
+  'relay-node-nyc', 'relay-node-sfo', 'relay-node-tok',
+  'relay-node-sin', 'relay-node-syd', 'relay-node-gru', 'relay-node-bom',
+]
+
+const REGIONS = ['us-east', 'eu-west', 'ap-southeast', 'us-west', 'eu-central', 'sa-east', 'me-central', 'ap-northeast']
+
+function randomRegion() {
+  return REGIONS[Math.floor(Math.random() * REGIONS.length)]
+}
+
+function randomLatency() {
+  return Math.floor(Math.random() * 120) + 5
+}
+
+function randomBalance() {
+  return parseFloat((Math.random() * 5 + 0.1).toFixed(4))
+}
+
 const EIP712_FORWARD_REQUEST_TYPES = {
   ForwardRequest: [
     { name: 'from', type: 'address' },
@@ -61,6 +100,34 @@ export default function GaslessRelay() {
   const [loading, setLoading] = useState(false)
   const [nonce, setNonce] = useState(null)
   const [nonceLoading, setNonceLoading] = useState(false)
+  const [discoveredSources, setDiscoveredSources] = useState(null)
+
+  // ─── Load previously discovered nodes from localStorage on mount ──────
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(LS_KEY_DISCOVERED)
+      if (saved) {
+        const parsed = JSON.parse(saved)
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          // Auto-add previously discovered nodes that aren't already in the list
+          const existingAddrs = new Set(relayNodes.map(n => n.address.toLowerCase()))
+          let added = 0
+          parsed.forEach(n => {
+            if (!existingAddrs.has(n.address?.toLowerCase())) {
+              setRelayNodes(prev => [...prev, n])
+              setNetworkStatus(p => ({ ...p, totalNodes: p.totalNodes + 1, activeNodes: p.activeNodes + 1 }))
+              existingAddrs.add(n.address?.toLowerCase())
+              added++
+            }
+          })
+          if (added > 0) {
+            addLog(`📦 Restored ${added} previously discovered nodes from local storage`, 'system')
+          }
+        }
+      }
+    } catch { /* ignore */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   const [networkStatus, setNetworkStatus] = useState({
     totalNodes: 0, activeNodes: 0, totalRelayed: 0, gasSaved: '0.0',
     connected: false, networkName: '', blockNumber: 0,
@@ -151,6 +218,245 @@ export default function GaslessRelay() {
     }
     addLog('✅ Balances refreshed', 'success')
   }, [w3, relayNodes, addLog])
+
+  // ─── Save discovered nodes to localStorage ────────────────────────────
+  const saveDiscoveredNodes = useCallback((nodes) => {
+    try {
+      const existing = JSON.parse(localStorage.getItem(LS_KEY_DISCOVERED) || '[]')
+      const existingAddrs = new Set(existing.map(n => n.address?.toLowerCase()))
+      const toSave = [...existing]
+      nodes.forEach(n => {
+        if (!existingAddrs.has(n.address?.toLowerCase())) {
+          toSave.push(n)
+          existingAddrs.add(n.address?.toLowerCase())
+        }
+      })
+      localStorage.setItem(LS_KEY_DISCOVERED, JSON.stringify(toSave.slice(-50)))
+    } catch { /* ignore */ }
+  }, [])
+
+  // ─── Add nodes with dedup ─────────────────────────────────────────────
+  const addNodesDeduped = useCallback((newNodes, sourceName) => {
+    const existingAddrs = new Set(relayNodes.map(n => n.address?.toLowerCase()))
+    let added = 0
+    let skipped = 0
+
+    newNodes.forEach(n => {
+      if (!n.address || !ethers.isAddress(n.address)) {
+        skipped++
+        return
+      }
+      if (existingAddrs.has(n.address.toLowerCase())) {
+        skipped++
+        return
+      }
+      const nodeEntry = {
+        id: Date.now() + Math.floor(Math.random() * 10000),
+        address: ethers.getAddress(n.address),
+        name: n.name || `auto-${relayNodes.length + added + 1}`,
+        region: n.region || randomRegion(),
+        status: 'online',
+        registered: n.registered || false,
+        txCount: n.txCount || 0,
+        successCount: n.successCount || 0,
+        latencyMs: n.latencyMs || randomLatency(),
+        balanceEth: n.balanceEth !== undefined ? String(n.balanceEth) : String(randomBalance()),
+      }
+      setRelayNodes(prev => [...prev, nodeEntry])
+      setNetworkStatus(p => ({ ...p, totalNodes: p.totalNodes + 1, activeNodes: p.activeNodes + 1 }))
+      existingAddrs.add(n.address.toLowerCase())
+      added++
+    })
+
+    setDiscoveredSources({
+      newNodes: added,
+      skipped,
+      errors: 0,
+      source: sourceName,
+      totalFound: newNodes.length,
+    })
+
+    // Save to localStorage for future auto-restore
+    if (added > 0) {
+      saveDiscoveredNodes(newNodes.filter(n => n.address && ethers.isAddress(n.address)))
+    }
+
+    return added
+  }, [relayNodes, saveDiscoveredNodes])
+
+  // ─── Auto-Discover: simulate network mesh discovery ────────────────────
+  const handleAutoDiscover = useCallback(() => {
+    addLog('🌐 Scanning relay mesh network for active nodes...', 'info')
+    const count = 3 + Math.floor(Math.random() * 4) // 3-6 nodes
+    const discovered = []
+    for (let i = 0; i < count; i++) {
+      const addrIdx = Math.floor(Math.random() * SAMPLE_RELAY_ADDRESSES.length)
+      discovered.push({
+        address: SAMPLE_RELAY_ADDRESSES[addrIdx],
+        name: SAMPLE_RELAY_NAMES[Math.floor(Math.random() * SAMPLE_RELAY_NAMES.length)],
+        region: randomRegion(),
+        latencyMs: randomLatency(),
+        balanceEth: randomBalance(),
+        registered: Math.random() > 0.4,
+      })
+    }
+    const added = addNodesDeduped(discovered, '🌐 Mesh Discovery')
+    if (added > 0) {
+      addLog(`🌐 Discovery complete — ${added} new relay nodes added to network`, 'success')
+    } else {
+      addLog('🔍 Discovery complete — no new unique nodes found', 'info')
+    }
+  }, [addNodesDeduped, addLog])
+
+  // ─── Import from P2P Network (reads localStorage) ─────────────────────
+  const handleImportFromP2P = useCallback(() => {
+    addLog('📡 Reading P2P Network peers from storage...', 'info')
+    try {
+      const raw = localStorage.getItem(LS_KEY_P2P_PEERS)
+      if (!raw) {
+        addLog('⚠ No P2P peers found in storage. Open the P2P Network tab and discover peers first.', 'warn')
+        setDiscoveredSources({ newNodes: 0, skipped: 0, errors: 0, source: '📡 P2P Network', totalFound: 0 })
+        return
+      }
+      const peers = JSON.parse(raw)
+      if (!Array.isArray(peers) || peers.length === 0) {
+        addLog('⚠ No P2P peers found — list is empty', 'warn')
+        return
+      }
+
+      // Convert peers to relay node format
+      const relayCandidates = peers.map((p, i) => ({
+        // Convert IP:port to a deterministic fake address for demo
+        address: SAMPLE_RELAY_ADDRESSES[(p.ip?.split('.').reduce((a, b) => a + parseInt(b), 0) || i) % SAMPLE_RELAY_ADDRESSES.length],
+        name: `p2p-${p.region || 'peer'}-${i + 1}`,
+        region: p.region || randomRegion(),
+        latencyMs: p.latencyMs || randomLatency(),
+        balanceEth: randomBalance(),
+        registered: Math.random() > 0.5,
+      }))
+
+      const added = addNodesDeduped(relayCandidates, '📡 P2P Network')
+      if (added > 0) {
+        addLog(`📡 Imported ${added} P2P peers as relay nodes`, 'success')
+      }
+    } catch (err) {
+      addLog(`❌ Failed to import P2P peers: ${err.message}`, 'error')
+    }
+  }, [addNodesDeduped, addLog])
+
+  // ─── Import from Relay Nodes Manager (reads localStorage) ─────────────
+  const handleImportFromRelayNodes = useCallback(() => {
+    addLog('🗼 Reading Relay Node Manager data from storage...', 'info')
+    try {
+      const raw = localStorage.getItem(LS_KEY_RELAY_NODES)
+      if (!raw) {
+        addLog('⚠ No Relay Nodes data found. Open the Relay Node Manager tab and discover nodes first.', 'warn')
+        setDiscoveredSources({ newNodes: 0, skipped: 0, errors: 0, source: '🗼 Relay Nodes', totalFound: 0 })
+        return
+      }
+      const nodes = JSON.parse(raw)
+      if (!Array.isArray(nodes) || nodes.length === 0) {
+        addLog('⚠ No relay nodes found — list is empty', 'warn')
+        return
+      }
+
+      const relayCandidates = nodes.map((n, i) => ({
+        address: SAMPLE_RELAY_ADDRESSES[(n.id || i) % SAMPLE_RELAY_ADDRESSES.length],
+        name: n.name || `relay-mgr-${i + 1}`,
+        region: n.region || randomRegion(),
+        latencyMs: n.latencyMs || randomLatency(),
+        balanceEth: n.balanceEth || randomBalance(),
+        registered: n.status === 'active',
+        txCount: n.txCount || 0,
+        successCount: n.successCount || 0,
+      }))
+
+      const added = addNodesDeduped(relayCandidates, '🗼 Relay Nodes')
+      if (added > 0) {
+        addLog(`🗼 Imported ${added} nodes from Relay Node Manager`, 'success')
+      }
+    } catch (err) {
+      addLog(`❌ Failed to import Relay Nodes: ${err.message}`, 'error')
+    }
+  }, [addNodesDeduped, addLog])
+
+  // ─── Discover from Forwarder Contract (on-chain query) ────────────────
+  const handleDiscoverFromForwarder = useCallback(async () => {
+    if (!forwarderContract) {
+      addLog('❌ Forwarder contract not loaded', 'error')
+      return
+    }
+    addLog('⛓ Querying TrustedForwarder for registered relayers...', 'info')
+    try {
+      // Try to enumerate relayers via events or relayers() mapping
+      // Since we can't enumerate mappings, use known test addresses
+      const discovered = []
+      for (const addr of SAMPLE_RELAY_ADDRESSES.slice(0, 5)) {
+        try {
+          const isRelayer = await forwarderContract.relayers(addr)
+          if (isRelayer) {
+            discovered.push({
+              address: addr,
+              name: `onchain-${addr.slice(2, 6)}`,
+              region: randomRegion(),
+              latencyMs: randomLatency(),
+              balanceEth: randomBalance(),
+              registered: true,
+            })
+            addLog(`  ✓ Found relayer: ${addr.slice(0, 10)}...`, 'success')
+          }
+        } catch { /* address may not support relayer check */ }
+      }
+
+      // Add sender wallet if it's registered
+      if (walletAddress) {
+        try {
+          const isRelayer = await forwarderContract.relayers(walletAddress)
+          if (isRelayer && !discovered.some(d => d.address.toLowerCase() === walletAddress.toLowerCase())) {
+            discovered.push({
+              address: walletAddress,
+              name: 'current-wallet',
+              region: randomRegion(),
+              latencyMs: 2,
+              balanceEth: '0.5',
+              registered: true,
+            })
+            addLog(`  ✓ Current wallet is a registered relayer`, 'success')
+          }
+        } catch { /* ignore */ }
+      }
+
+      if (discovered.length > 0) {
+        const added = addNodesDeduped(discovered, '⛓ Forwarder Contract')
+        addLog(`⛓ Found ${discovered.length} registered relayers, added ${added}`, added > 0 ? 'success' : 'info')
+      } else {
+        // Fallback: generate some simulated registered relayers
+        addLog('💡 No registered relayers found on-chain — generating simulated ones for testing', 'info')
+        handleAutoDiscover()
+      }
+    } catch (err) {
+      addLog(`❌ Forwarder discovery failed: ${err.message}`, 'error')
+    }
+  }, [forwarderContract, walletAddress, addNodesDeduped, handleAutoDiscover, addLog])
+
+  // ─── Quick add 5 nodes ────────────────────────────────────────────────
+  const handleBatchAdd = useCallback(() => {
+    addLog('📦 Quick-adding 5 relay nodes...', 'info')
+    const nodes = []
+    for (let i = 0; i < 5; i++) {
+      const idx = (relayNodes.length + i) % SAMPLE_RELAY_ADDRESSES.length
+      nodes.push({
+        address: SAMPLE_RELAY_ADDRESSES[idx],
+        name: `quick-${i + 1}`,
+        region: randomRegion(),
+        latencyMs: randomLatency(),
+        balanceEth: randomBalance(),
+        registered: Math.random() > 0.5,
+      })
+    }
+    const added = addNodesDeduped(nodes, '📦 Quick Add')
+    addLog(`📦 Added ${added} nodes. Ready to relay!`, 'success')
+  }, [relayNodes.length, addNodesDeduped, addLog])
 
   const handleSubmitMetaTx = useCallback(async () => {
     if (!forwarderAddress || !ethers.isAddress(forwarderAddress)) { addLog('❌ Valid forwarder address required', 'error'); return }
@@ -335,6 +641,74 @@ export default function GaslessRelay() {
             ))}
           </div>
         )}
+      </ConfigPanel>
+
+      {/* ═══ AUTO-DISCOVERY PANEL ═════════════════════════════════════════ */}
+      <ConfigPanel title="🔍 Auto-Discover Relay Nodes" defaultOpen={false}>
+        <p style={{ fontSize: 12, color: '#888', marginBottom: 12 }}>
+          Automatically discover relay nodes from the P2P network, other components, or generate simulated nodes for testing.
+          Discovered nodes are added to the relay network above automatically.
+        </p>
+
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 16 }}>
+          <button className="btn btn-primary" onClick={handleAutoDiscover} style={{ fontSize: 12, padding: '8px 16px' }}>
+            🌐 Auto-Discover Nodes
+          </button>
+          <button className="btn btn-secondary" onClick={handleImportFromP2P} style={{ fontSize: 12, padding: '8px 16px' }}>
+            📡 Import from P2P Network
+          </button>
+          <button className="btn btn-secondary" onClick={handleImportFromRelayNodes} style={{ fontSize: 12, padding: '8px 16px' }}>
+            🗼 Import from Relay Nodes
+          </button>
+          {forwarderContract && (
+            <button className="btn btn-secondary" onClick={handleDiscoverFromForwarder} style={{ fontSize: 12, padding: '8px 16px' }}>
+              ⛓ Discover from Forwarder
+            </button>
+          )}
+          <button className="btn btn-secondary" onClick={handleBatchAdd} style={{ fontSize: 12, padding: '8px 16px' }}>
+            📦 Quick Add 5 Nodes
+          </button>
+        </div>
+
+        {/* Import stats */}
+        {discoveredSources && (
+          <div style={{
+            padding: '10px 14px', borderRadius: 8, marginBottom: 10,
+            background: 'rgba(59,130,246,0.06)', border: '1px solid rgba(59,130,246,0.15)',
+            fontSize: 12,
+          }}>
+            <strong style={{ color: '#60a5fa' }}>📊 Import Summary</strong>
+            {discoveredSources.newNodes > 0 && (
+              <span style={{ color: '#22c55e', marginLeft: 8 }}>
+                ✅ {discoveredSources.newNodes} new nodes added
+              </span>
+            )}
+            {discoveredSources.skipped > 0 && (
+              <span style={{ color: '#888', marginLeft: 8 }}>
+                ⏭ {discoveredSources.skipped} duplicates skipped
+              </span>
+            )}
+            {discoveredSources.errors > 0 && (
+              <span style={{ color: '#ef4444', marginLeft: 8 }}>
+                ❌ {discoveredSources.errors} errors
+              </span>
+            )}
+            <div style={{ marginTop: 4, color: '#888', fontSize: 11 }}>
+              Source: {discoveredSources.source} · {discoveredSources.totalFound} found total
+            </div>
+          </div>
+        )}
+
+        <div style={{ fontSize: 11, color: '#666' }}>
+          <strong>💡 Tips:</strong>
+          <ul style={{ margin: '4px 0 0 16px', lineHeight: 1.6 }}>
+            <li>"Auto-Discover" simulates network discovery — finds relay nodes on the mesh and adds them</li>
+            <li>"Import from P2P Network" reads peers saved from the P2P Propagation Network tab</li>
+            <li>"Import from Relay Nodes" reads nodes from the Relay Node Manager tab</li>
+            <li>"Discover from Forwarder" queries the TrustedForwarder contract for registered relayers</li>
+            <li>Discovered nodes are automatically saved and will be available across sessions</li>
+          </ul>
+        </div>
       </ConfigPanel>
 
       <LogPanel logs={logs} title="📋 Activity Log" />
