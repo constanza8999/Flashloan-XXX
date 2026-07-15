@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { ETH_RPCS } from '../constants'
+import { ETH_RPCS, ETH_USDT, ETH_USDC, ETH_WETH, ETH_DAI, BSC_USDT, BSC_WBNB, BSC_USDC, BSC_BTCB, BSC_WETH } from '../constants'
 import { ethers } from 'ethers'
 import { useProvider } from '../hooks'
 import { useWeb3 } from '../context/Web3Context'
@@ -63,6 +63,20 @@ const ERC20_BALANCE_ABI = [
    "name": "decimals", "outputs": [{"name": "", "type": "uint8"}], "type": "function"},
   {"constant": true, "inputs": [],
    "name": "symbol", "outputs": [{"name": "", "type": "string"}], "type": "function"},
+]
+
+const TOKEN_PRESETS = [
+  { label: 'USDT', addr: ETH_USDT, chain: 'ETH' },
+  { label: 'USDC', addr: ETH_USDC, chain: 'ETH' },
+  { label: 'WETH', addr: ETH_WETH, chain: 'ETH' },
+  { label: 'DAI', addr: ETH_DAI, chain: 'ETH' },
+  { label: 'WBTC', addr: '0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599', chain: 'ETH' },
+  { label: 'stETH', addr: '0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84', chain: 'ETH' },
+  { label: 'BSC USDT', addr: BSC_USDT, chain: 'BSC' },
+  { label: 'BSC USDC', addr: BSC_USDC, chain: 'BSC' },
+  { label: 'WBNB', addr: BSC_WBNB, chain: 'BSC' },
+  { label: 'BSC WETH', addr: BSC_WETH, chain: 'BSC' },
+  { label: 'BTCB', addr: BSC_BTCB, chain: 'BSC' },
 ]
 
 // Generate initial tx history for a node
@@ -135,6 +149,11 @@ export default function RelayNodes() {
   const [tokenDecimals, setTokenDecimals] = useState(18)
   const [tokenLoading, setTokenLoading] = useState(false)
   const [tokenError, setTokenError] = useState('')
+  const [sweepProgress, setSweepProgress] = useState(null) // null | { total, current, completed, failed, results }
+  const [sweepIncludeEth, setSweepIncludeEth] = useState(true)
+  const [sweepSelectedPresets, setSweepSelectedPresets] = useState(
+    () => Object.fromEntries(TOKEN_PRESETS.map(p => [p.label, true]))
+  )
 
   const [multiSendMode, setMultiSendMode] = useState('equal') // 'equal' | 'fixed' | 'percent'
   const [multiSendRecipients, setMultiSendRecipients] = useState([])
@@ -485,6 +504,165 @@ export default function RelayNodes() {
     }
 
     setWithdrawing(false)
+  }
+
+  // ─── Sweep All (ETH + Known Tokens) ────────────────────────────────────
+  async function handleSweepTokens() {
+    if (!contractAddress || !ethers.isAddress(contractAddress)) {
+      addLog('(x) Invalid contract address', 'error')
+      return
+    }
+    if (!ethProvider) {
+      addLog('(x) No RPC connection', 'error')
+      return
+    }
+    if (!signer) {
+      addLog('(x) No wallet connected — connect your owner wallet first', 'error')
+      return
+    }
+
+    const includeEth = sweepIncludeEth
+    const selectedPresets = TOKEN_PRESETS.filter(p => sweepSelectedPresets[p.label])
+    const totalItems = (includeEth ? 1 : 0) + selectedPresets.length
+
+    if (selectedPresets.length === 0 && !includeEth) {
+      addLog('(x) No presets selected and ETH disabled — nothing to sweep', 'error')
+      setWithdrawing(false)
+      return
+    }
+
+    setSweepProgress({ total: totalItems, current: 0, completed: 0, failed: 0, results: [] })
+    setWithdrawing(true)
+    addLog('🧹 Starting full sweep' + (includeEth ? ' (ETH + ' + selectedPresets.length + ' tokens)' : ' of ' + selectedPresets.length + ' tokens') + '...', 'info')
+
+    const results = []
+    let itemIdx = 0
+
+    // ── Step 1: Rescue ETH (if enabled) ──
+    if (includeEth) {
+      itemIdx++
+      setSweepProgress(prev => ({ ...prev, current: itemIdx }))
+
+      const ethBal = parseFloat(contractBalance || '0')
+
+      if (ethBal > 0) {
+        addLog('  [' + itemIdx + '/' + totalItems + '] Withdrawing ' + ethBal.toFixed(4) + ' ETH from contract...', 'info')
+        try {
+          const contractAddr = ethers.getAddress(contractAddress)
+          const contract = new ethers.Contract(contractAddr, FLASH_ARBITRAGE_ABI, signer)
+          const feeData = await ethProvider.getFeeData()
+
+          const tx = await contract.rescueNative({
+            gasLimit: 100000n,
+            maxPriorityFeePerGas: feeData.maxPriorityFeePerGas || ethers.parseUnits('1', 'gwei'),
+            maxFeePerGas: feeData.maxFeePerGas || ethers.parseUnits('30', 'gwei'),
+          })
+
+          addLog('  Tx sent: ' + tx.hash.slice(0, 18) + '...', 'success')
+          const receipt = await tx.wait()
+          const explorerUrl = EXPLORER_BASE + tx.hash
+
+          addLog('  ✅ ETH withdrawn! Block ' + receipt.blockNumber, 'profit')
+          addLog('  🔗 ' + explorerUrl, 'link')
+
+          addNodeTxLog(Date.now(), {
+            id: Date.now(),
+            time: new Date().toLocaleTimeString(),
+            type: 'withdraw',
+            msg: 'Sweep: ' + ethBal.toFixed(4) + ' ETH → wallet',
+            txHash: tx.hash,
+            status: 'confirmed',
+            explorerUrl,
+          })
+
+          setContractBalance('0')
+          setSweepProgress(prev => ({ ...prev, completed: prev.completed + 1 }))
+          results.push({ label: '🏦 ETH (native)', amount: ethBal.toFixed(4), status: 'success', txHash: tx.hash })
+
+        } catch (err) {
+          addLog('(x) [' + itemIdx + '/' + totalItems + '] ETH rescue FAILED: ' + err.message, 'error')
+          setSweepProgress(prev => ({ ...prev, failed: prev.failed + 1 }))
+          results.push({ label: '🏦 ETH (native)', status: 'failed', error: err.message })
+        }
+      } else {
+        addLog('  [' + itemIdx + '/' + totalItems + '] ETH: 0 balance, skipped', 'info')
+        setSweepProgress(prev => ({ ...prev, completed: prev.completed + 1 }))
+        results.push({ label: '🏦 ETH (native)', amount: '0', status: 'skipped' })
+      }
+    }
+
+    // ── Step 2: Rescue Tokens ──
+    for (let i = 0; i < selectedPresets.length; i++) {
+      const preset = selectedPresets[i]
+      const idx = itemIdx + i + 1
+      setSweepProgress(prev => ({ ...prev, current: idx }))
+
+      addLog('  [' + idx + '/' + totalItems + '] Checking ' + preset.label + '...', 'info')
+
+      try {
+        const tokenContract = new ethers.Contract(preset.addr, ERC20_BALANCE_ABI, ethProvider)
+        const bal = await tokenContract.balanceOf(ethers.getAddress(contractAddress))
+
+        if (bal <= 0n) {
+          addLog('  [' + idx + '/' + totalItems + '] ' + preset.label + ': 0 balance, skipped', 'info')
+          setSweepProgress(prev => ({ ...prev, completed: prev.completed + 1 }))
+          results.push({ label: preset.label, amount: '0', status: 'skipped' })
+          continue
+        }
+
+        const decimals = await tokenContract.decimals()
+        const symbol = await tokenContract.symbol()
+        const formatted = ethers.formatUnits(bal, decimals)
+        addLog('  [' + idx + '/' + totalItems + '] Rescuing ' + formatted + ' ' + symbol + '...', 'info')
+
+        const contract = new ethers.Contract(ethers.getAddress(contractAddress), FLASH_ARBITRAGE_ABI, signer)
+        const feeData = await ethProvider.getFeeData()
+
+        const tx = await contract.rescueTokens(preset.addr, bal, {
+          gasLimit: 200000n,
+          maxPriorityFeePerGas: feeData.maxPriorityFeePerGas || ethers.parseUnits('1', 'gwei'),
+          maxFeePerGas: feeData.maxFeePerGas || ethers.parseUnits('30', 'gwei'),
+        })
+
+        addLog('  Tx sent: ' + tx.hash.slice(0, 18) + '...', 'success')
+        const receipt = await tx.wait()
+        const explorerUrl = EXPLORER_BASE + tx.hash
+
+        addLog('  ✅ ' + symbol + ' rescued! Block ' + receipt.blockNumber, 'profit')
+        addLog('  🔗 ' + explorerUrl, 'link')
+
+        addNodeTxLog(Date.now(), {
+          id: Date.now(),
+          time: new Date().toLocaleTimeString(),
+          type: 'withdraw',
+          msg: 'Sweep: ' + formatted + ' ' + symbol + ' → wallet',
+          txHash: tx.hash,
+          status: 'confirmed',
+          explorerUrl,
+        })
+
+        setSweepProgress(prev => ({ ...prev, completed: prev.completed + 1 }))
+        results.push({ label: preset.label, amount: formatted, status: 'success', txHash: tx.hash })
+
+      } catch (err) {
+        addLog('(x) [' + idx + '/' + totalItems + '] ' + preset.label + ' FAILED: ' + err.message, 'error')
+        setSweepProgress(prev => ({ ...prev, failed: prev.failed + 1 }))
+        results.push({ label: preset.label, status: 'failed', error: err.message })
+      }
+    }
+
+    const rescued = results.filter(r => r.status === 'success').length
+    const skipped = results.filter(r => r.status === 'skipped').length
+    const failed = results.filter(r => r.status === 'failed').length
+    addLog('(done) 🧹 SWEEP COMPLETE! Rescued: ' + rescued + ', Skipped: ' + skipped + ', Failed: ' + failed, failed > 0 ? 'warning' : 'profit')
+    setSweepProgress(prev => ({ ...prev, current: -1 }))
+    setWithdrawing(false)
+
+    // Refresh contract balance and selected token balance
+    fetchContractBalance()
+    if (tokenAddress && ethers.isAddress(tokenAddress)) {
+      fetchTokenBalance()
+    }
   }
 
   // ─── Multi-Send ───────────────────────────────────────────────────────
@@ -1044,8 +1222,20 @@ export default function RelayNodes() {
             placeholder="0x... (USDT, USDC, WETH, etc.)"
             style={{ fontSize: 12 }}
           />
+          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 6 }}>
+            <span style={{ fontSize: 10, color: 'var(--text-dim)', marginRight: 4, lineHeight: '24px' }}>Quick fill:</span>
+            {TOKEN_PRESETS.map(p => (
+              <button
+                key={p.label}
+                className={'btn ' + (tokenAddress.toLowerCase() === p.addr.toLowerCase() ? 'btn-primary' : 'btn-secondary')}
+                onClick={() => setTokenAddress(p.addr)}
+                style={{ fontSize: 10, padding: '3px 10px', lineHeight: 1.4 }}
+                title={p.addr}
+              >{p.label}</button>
+            ))}
+          </div>
           <span className="form-hint">
-            Enter the ERC20 token address held by the contract. Balance auto-fetches.
+            Enter any ERC20 token address or click a preset above. Balance auto-fetches.
           </span>
         </div>
 
@@ -1104,6 +1294,165 @@ export default function RelayNodes() {
             </button>
           </div>
         </div>
+
+        {/* ── Sweep All (ETH + Tokens) ── */}
+        <div style={{
+          marginTop: 10, marginBottom: 6,
+          display: 'flex', gap: 12, alignItems: 'center',
+        }}>
+          <button
+            className="btn btn-primary"
+            onClick={handleSweepTokens}
+            disabled={withdrawing || !ethProvider || !signer || !ethers.isAddress(contractAddress)}
+            style={{
+              fontSize: 12, padding: '10px 20px', minWidth: 220,
+              background: 'linear-gradient(135deg, #f59e0b, #d97706)',
+              border: 'none',
+            }}
+          >
+            {withdrawing && sweepProgress
+              ? '⏳ Sweeping ' + sweepProgress.completed + '/' + sweepProgress.total + '...'
+              : '🧹 Sweep All (ETH + Tokens)'
+            }
+          </button>
+          <label className="checkbox-label" style={{ fontSize: 11, cursor: 'pointer', gap: 4 }}>
+            <input
+              type="checkbox"
+              checked={sweepIncludeEth}
+              onChange={e => setSweepIncludeEth(e.target.checked)}
+              disabled={withdrawing}
+              style={{ cursor: 'pointer' }}
+            />
+            Include ETH withdrawal (rescueNative)
+          </label>
+          <span style={{ fontSize: 10, color: 'var(--text-dim)', marginLeft: 'auto' }}>
+            {sweepIncludeEth
+              ? '1 ETH + ' + TOKEN_PRESETS.length + ' token presets'
+              : TOKEN_PRESETS.length + ' token presets'
+            }
+          </span>
+        </div>
+
+        {/* ── Preset selection checkboxes ── */}
+        <div style={{
+          marginBottom: 8, padding: '6px 10px',
+          borderRadius: 6, background: 'rgba(255,255,255,0.02)',
+          border: '1px solid var(--border)',
+        }}>
+          <div style={{
+            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+            marginBottom: 4, fontSize: 10, color: 'var(--text-dim)',
+          }}>
+            <span>🔍 Selected presets ({TOKEN_PRESETS.filter(p => sweepSelectedPresets[p.label]).length}/{TOKEN_PRESETS.length})</span>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button
+                className="btn btn-secondary"
+                disabled={withdrawing}
+                onClick={() => setSweepSelectedPresets(Object.fromEntries(TOKEN_PRESETS.map(p => [p.label, true])))}
+                style={{ fontSize: 9, padding: '2px 8px' }}
+              >Select All</button>
+              <button
+                className="btn btn-secondary"
+                disabled={withdrawing}
+                onClick={() => setSweepSelectedPresets(Object.fromEntries(TOKEN_PRESETS.map(p => [p.label, false])))}
+                style={{ fontSize: 9, padding: '2px 8px' }}
+              >Deselect All</button>
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {TOKEN_PRESETS.map(p => (
+              <label
+                key={p.label}
+                className="checkbox-label"
+                style={{
+                  fontSize: 10, cursor: 'pointer', gap: 3,
+                  padding: '2px 6px', borderRadius: 4,
+                  background: sweepSelectedPresets[p.label] ? 'rgba(251,191,36,0.1)' : 'transparent',
+                  border: '1px solid ' + (sweepSelectedPresets[p.label] ? 'rgba(251,191,36,0.3)' : 'transparent'),
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={!!sweepSelectedPresets[p.label]}
+                  onChange={e => setSweepSelectedPresets(prev => ({ ...prev, [p.label]: e.target.checked }))}
+                  disabled={withdrawing}
+                  style={{ cursor: 'pointer' }}
+                />
+                <span style={{ color: p.chain === 'BSC' ? 'var(--accent-yellow)' : 'var(--accent-blue)' }}>
+                  {p.chain === 'BSC' ? '🔶' : '🔷'}
+                </span>
+                {p.label}
+              </label>
+            ))}
+          </div>
+        </div>
+
+        {/* Sweep progress bar */}
+        {sweepProgress && sweepProgress.total > 0 && (withdrawing || sweepProgress.current === -1) && (
+          <div style={{ marginBottom: 10 }}>
+            <div style={{
+              height: 6, borderRadius: 3, background: 'rgba(255,255,255,0.06)',
+              overflow: 'hidden', marginBottom: 4,
+            }}>
+              <div style={{
+                height: '100%', borderRadius: 3,
+                width: ((sweepProgress.completed + sweepProgress.failed) / sweepProgress.total * 100) + '%',
+                background: sweepProgress.failed > 0
+                  ? 'linear-gradient(90deg, #22c55e ' + (sweepProgress.completed / Math.max(sweepProgress.completed + sweepProgress.failed, 1) * 100) + '%, #ef4444 100%)'
+                  : '#22c55e',
+                transition: 'width 0.3s',
+              }} />
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--text-dim)' }}>
+              <span>🏁 {sweepProgress.completed} processed</span>
+              {sweepProgress.current > 0 && sweepProgress.current <= sweepProgress.total && (
+                <span>▶ #{sweepProgress.current}/{sweepProgress.total}</span>
+              )}
+              <span>⏭ {sweepProgress.total - sweepProgress.completed - sweepProgress.failed} remaining</span>
+              {sweepProgress.failed > 0 && <span style={{ color: '#ef4444' }}>❌ {sweepProgress.failed} failed</span>}
+            </div>
+          </div>
+        )}
+
+        {/* Sweep results summary */}
+        {sweepProgress && sweepProgress.results.length > 0 && !withdrawing && (
+          <div style={{ marginBottom: 12 }}>
+            <div style={{
+              padding: '8px 12px', borderRadius: 6,
+              background: sweepProgress.failed === 0 ? 'rgba(34,197,94,0.06)' : 'rgba(239,68,68,0.06)',
+              border: '1px solid ' + (sweepProgress.failed === 0 ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)'),
+              fontSize: 11, marginBottom: 8,
+            }}>
+              <strong style={{ color: sweepProgress.failed === 0 ? '#22c55e' : '#ef4444' }}>
+                🧹 Sweep Complete — {sweepProgress.results.filter(r => r.status === 'success').length} rescued,
+                {sweepProgress.results.filter(r => r.status === 'skipped').length} skipped,
+                {sweepProgress.failed} failed
+              </strong>
+            </div>
+            <div style={{ maxHeight: 150, overflowY: 'auto', fontSize: 10 }}>
+              {sweepProgress.results.map((res, i) => (
+                <div key={i} style={{
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                  padding: '4px 8px', borderRadius: 4,
+                  background: res.status === 'success' ? 'rgba(34,197,94,0.04)' : res.status === 'failed' ? 'rgba(239,68,68,0.04)' : 'rgba(100,116,139,0.04)',
+                  marginBottom: 2,
+                }}>
+                  <span style={{ color: 'var(--text-dim)' }}>{res.label}</span>
+                  <span style={{ color: '#a78bfa' }}>{res.amount !== '0' ? res.amount : '—'}</span>
+                  <span>
+                    {res.status === 'success' ? (
+                      <a href={EXPLORER_BASE + res.txHash} target="_blank" rel="noopener noreferrer" style={{ color: '#22c55e', textDecoration: 'none' }}>✅ ↗</a>
+                    ) : res.status === 'skipped' ? (
+                      <span style={{ color: '#888' }}>⏭</span>
+                    ) : (
+                      <span style={{ color: '#ef4444' }} title={res.error}>❌</span>
+                    )}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div style={{
           marginTop: 10, padding: '8px 12px', borderRadius: 6,
