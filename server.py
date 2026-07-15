@@ -582,6 +582,10 @@ ADMIN_PASSWORD = "constanza999"
 # PayPal email (where payments go)
 PAYPAL_EMAIL = "josejaimejulia7@gmail.com"
 
+# Stripe configuration (loaded from .env)
+STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY", "")
+STRIPE_PUBLISHABLE_KEY = os.environ.get("STRIPE_PUBLISHABLE_KEY", "")
+
 def _hash_password(password: str) -> str:
     """Simple hash for demo — use bcrypt in production."""
     return hashlib.sha256(password.encode()).hexdigest()
@@ -761,6 +765,105 @@ async def activate_license(req: ActivateRequest):
         "tier": lk["tier"],
         "email": target_email,
         "expires_at": lk["expires_at"],
+    }
+
+
+# ─── Stripe Endpoints ──────────────────────────────────────────────
+
+@app.get("/api/stripe/config")
+async def stripe_config():
+    """Return Stripe publishable key for the frontend."""
+    pk = STRIPE_PUBLISHABLE_KEY or "pk_test_51PbCxUCX9iJIBu4GHWEqx8UzNenVwRVzWThr7mEpxOTAPGfqOOKCsjxIQpJRpmCFQOXXOwXh5BlIda2fQ2klyPW500TgWq4Piv"
+    return {"publishable_key": pk}
+
+
+class StripePaymentIntentRequest(BaseModel):
+    plan: str  # pro | enterprise
+    email: str
+
+
+@app.post("/api/stripe/create-payment-intent")
+async def stripe_create_payment_intent(req: StripePaymentIntentRequest):
+    """Create a Stripe PaymentIntent for the given plan."""
+    valid_plans = {
+        "pro": {"price": 2999, "name": "Pro"},  # amounts in cents
+        "enterprise": {"price": 9999, "name": "Enterprise"},
+    }
+    plan_info = valid_plans.get(req.plan)
+    if not plan_info:
+        return JSONResponse({"error": f"Invalid plan: {req.plan}"}, status_code=400)
+
+    if not STRIPE_SECRET_KEY:
+        # Demo mode: return a fake client secret
+        import uuid
+        log.info(f"Stripe demo mode: creating fake PaymentIntent for {req.plan}")
+        return {
+            "client_secret": f"pi_demo_{uuid.uuid4().hex}_secret_demo",
+            "amount": plan_info["price"],
+            "currency": "usd",
+            "demo": True,
+        }
+
+    try:
+        import stripe
+        stripe.api_key = STRIPE_SECRET_KEY
+
+        intent = stripe.PaymentIntent.create(
+            amount=plan_info["price"],
+            currency="usd",
+            description=f"Token Toolkit {plan_info['name']} - Monthly Subscription",
+            metadata={
+                "plan": req.plan,
+                "email": req.email,
+            },
+            automatic_payment_methods={"enabled": True},
+        )
+
+        log.info(f"Stripe PaymentIntent created: {intent.id} for {req.plan}")
+
+        return {
+            "client_secret": intent.client_secret,
+            "amount": plan_info["price"],
+            "currency": "usd",
+            "payment_intent_id": intent.id,
+        }
+    except ImportError:
+        return JSONResponse({"error": "Stripe Python SDK not installed. Run: pip install stripe"}, status_code=500)
+    except Exception as e:
+        log.error(f"Stripe create payment intent failed: {e}")
+        return JSONResponse({"error": f"Stripe error: {str(e)}"}, status_code=500)
+
+
+class StripeConfirmPaymentRequest(BaseModel):
+    payment_intent_id: str
+    plan: str
+    email: str
+    license_key: Optional[str] = None
+
+
+@app.post("/api/stripe/confirm-payment")
+async def stripe_confirm_payment(req: StripeConfirmPaymentRequest):
+    """Confirm a Stripe payment and store the license key association."""
+    log.info(f"Stripe payment confirmed: {req.payment_intent_id} for {req.email} ({req.plan})")
+
+    # If we have a real Stripe secret key, verify the payment
+    if STRIPE_SECRET_KEY:
+        try:
+            import stripe
+            stripe.api_key = STRIPE_SECRET_KEY
+            intent = stripe.PaymentIntent.retrieve(req.payment_intent_id)
+            if intent.status not in ("succeeded", "processing"):
+                return JSONResponse({
+                    "error": f"Payment not successful. Status: {intent.status}"
+                }, status_code=400)
+        except Exception as e:
+            log.warning(f"Stripe payment verification failed: {e}")
+
+    return {
+        "success": True,
+        "payment_intent_id": req.payment_intent_id,
+        "plan": req.plan,
+        "email": req.email,
     }
 
 

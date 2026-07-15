@@ -2,10 +2,13 @@ import React, { useState } from 'react'
 import { useSubscription, PLANS } from '../context/SubscriptionContext'
 import CopyButton from './shared/CopyButton'
 import LoadingButton from './shared/LoadingButton'
+import PayPalSubscribeButton, { PayPalProvider } from './PayPalButton'
+import StripeCheckout from './StripeCheckout'
 
 export default function SubscriptionPlans({ onNavigate, onUpgrade }) {
   const { user, userTier, purchasePlan, activateLicense, loading, logout, isLoggedIn } = useSubscription()
   const [selectedPlan, setSelectedPlan] = useState(null)
+  const [selectedPayment, setSelectedPayment] = useState('paypal')
   const [purchaseResult, setPurchaseResult] = useState(null)
   const [licenseKey, setLicenseKey] = useState('')
   const [activateResult, setActivateResult] = useState(null)
@@ -174,98 +177,142 @@ export default function SubscriptionPlans({ onNavigate, onUpgrade }) {
       )}
 
       {/* Plans grid */}
-      <div className="plans-grid">
-        {Object.values(PLANS).map(plan => {
-          const isCurrent = userTier === plan.id
-          const isUpgrade = (userTier === 'free' && plan.id !== 'free') ||
-                            (userTier === 'pro' && plan.id === 'enterprise')
+      <PayPalProvider>
+        <div className="plans-grid">
+          {Object.values(PLANS).map(plan => {
+            const isCurrent = userTier === plan.id
 
-          return (
-            <div
-              key={plan.id}
-              className={`plan-card ${plan.popular ? 'plan-popular' : ''} ${isCurrent ? 'plan-current' : ''}`}
-            >
-              {plan.popular && <div className="plan-badge">Most Popular</div>}
+            return (
+              <div
+                key={plan.id}
+                className={`plan-card ${plan.popular ? 'plan-popular' : ''} ${isCurrent ? 'plan-current' : ''}`}
+              >
+                {plan.popular && <div className="plan-badge">Most Popular</div>}
 
-              <div className="plan-header" style={{ '--plan-color': plan.color }}>
-                <span className="plan-icon">{plan.icon}</span>
-                <h3 className="plan-name">{plan.name}</h3>
-                <p className="plan-desc">{plan.description}</p>
-              </div>
+                <div className="plan-header" style={{ '--plan-color': plan.color }}>
+                  <span className="plan-icon">{plan.icon}</span>
+                  <h3 className="plan-name">{plan.name}</h3>
+                  <p className="plan-desc">{plan.description}</p>
+                </div>
 
-              <div className="plan-price">
-                {plan.price === 0 ? (
-                  <span className="plan-price-free">Free</span>
-                ) : (
-                  <>
-                    <span className="plan-price-amount">${plan.price}</span>
-                    <span className="plan-price-period">/{plan.period}</span>
-                  </>
-                )}
-              </div>
-
-              <ul className="plan-features">
-                {plan.features.map((f, i) => (
-                  <li key={i} className="plan-feature">
-                    <span className="plan-feature-check">✓</span>
-                    {f}
-                  </li>
-                ))}
-              </ul>
-
-              <div className="plan-action">
-                {isCurrent ? (
-                  <button className="btn btn-secondary" disabled style={{ width: '100%', justifyContent: 'center' }}>
-                    ✅ Current Plan
-                  </button>
-                ) : plan.price === 0 ? (
-                  <button className="btn btn-secondary" disabled style={{ width: '100%', justifyContent: 'center' }}>
-                    Free
-                  </button>
-                ) : (
-                  <LoadingButton
-                    loading={loading && selectedPlan === plan.id}
-                    loadingText="⏳ Processing..."
-                    onClick={() => handlePurchase(plan.id)}
-                    style={{ width: '100%', justifyContent: 'center' }}
-                    variant={plan.popular ? 'btn-primary' : 'btn-secondary'}
-                  >
-                    💳 Subscribe — ${plan.price}/mo
-                  </LoadingButton>
-                )}
-              </div>
-
-              {purchaseResult?.plan === plan.id && (
-                <div className="plan-purchase-result">
-                  {purchaseResult.error ? (
-                    <div style={{ color: '#ef4444', fontSize: 12 }}>❌ {purchaseResult.error}</div>
+                <div className="plan-price">
+                  {plan.price === 0 ? (
+                    <span className="plan-price-free">Free</span>
                   ) : (
-                    <div>
-                      <div style={{ color: '#22c55e', fontSize: 13, fontWeight: 600, marginBottom: 8 }}>
-                        ✅ Purchase successful!
-                      </div>
-                      <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
-                        <div style={{ marginBottom: 4 }}>Your license key has been generated.</div>
-                        <div style={{
-                          display: 'flex', alignItems: 'center', gap: 6,
-                          padding: '8px 10px', background: 'rgba(0,0,0,0.2)',
-                          borderRadius: 6, fontFamily: 'var(--font-mono)', fontSize: 12,
-                        }}>
-                          <span>{purchaseResult.licenseKey}</span>
-                          <CopyButton text={purchaseResult.licenseKey} />
-                        </div>
-                        <div style={{ marginTop: 8, fontSize: 10, color: 'var(--text-dim)' }}>
-                          A copy has also been sent to your email.
-                        </div>
-                      </div>
-                    </div>
+                    <>
+                      <span className="plan-price-amount">${plan.price}</span>
+                      <span className="plan-price-period">/{plan.period}</span>
+                    </>
                   )}
                 </div>
-              )}
-            </div>
-          )
-        })}
-      </div>
+
+                <ul className="plan-features">
+                  {plan.features.map((f, i) => (
+                    <li key={i} className="plan-feature">
+                      <span className="plan-feature-check">✓</span>
+                      {f}
+                    </li>
+                  ))}
+                </ul>
+
+                <div className="plan-action">
+                  {isCurrent ? (
+                    <button className="btn btn-secondary" disabled style={{ width: '100%', justifyContent: 'center' }}>
+                      ✅ Current Plan
+                    </button>
+                  ) : plan.price === 0 ? (
+                    <button className="btn btn-secondary" disabled style={{ width: '100%', justifyContent: 'center' }}>
+                      Free
+                    </button>                    ) : (
+                      <div className="payment-methods">
+                        {/* Payment method tabs */}
+                        <div className="pm-tabs">
+                          <button
+                            className={`pm-tab ${selectedPayment === 'paypal' ? 'pm-tab-active' : ''}`}
+                            onClick={() => setSelectedPayment('paypal')}
+                          >
+                            <span className="pm-tab-icon">
+                              <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                                <circle cx="8" cy="8" r="7" fill="#003087" />
+                                <text x="5.5" y="11" fill="white" fontSize="7" fontWeight="bold">P</text>
+                              </svg>
+                            </span>
+                            PayPal
+                          </button>
+                          <button
+                            className={`pm-tab ${selectedPayment === 'stripe' ? 'pm-tab-active' : ''}`}
+                            onClick={() => setSelectedPayment('stripe')}
+                          >
+                            <span className="pm-tab-icon">💳</span>
+                            Card
+                          </button>
+                        </div>
+
+                        {/* PayPal checkout */}
+                        {selectedPayment === 'paypal' && (
+                          <PayPalSubscribeButton
+                            planId={plan.id}
+                            onComplete={(result) => {
+                              setSelectedPlan(plan.id)
+                              setPurchaseResult({ plan: plan.id, licenseKey: result.licenseKey })
+                            }}
+                            onError={(err) => {
+                              setPurchaseResult({ plan: plan.id, error: err })
+                            }}
+                          />
+                        )}
+
+                        {/* Stripe checkout */}
+                        {selectedPayment === 'stripe' && (
+                          <StripeCheckout
+                            planId={plan.id}
+                            onComplete={(result) => {
+                              setSelectedPlan(plan.id)
+                              setPurchaseResult({ plan: plan.id, licenseKey: result.licenseKey })
+                            }}
+                            onError={(err) => {
+                              if (err !== 'cancelled') {
+                                setPurchaseResult({ plan: plan.id, error: err })
+                              }
+                            }}
+                          />
+                        )}
+                      </div>
+                    )}
+                </div>
+
+                {purchaseResult?.plan === plan.id && (
+                  <div className="plan-purchase-result">
+                    {purchaseResult.error ? (
+                      <div style={{ color: '#ef4444', fontSize: 12 }}>❌ {purchaseResult.error}</div>
+                    ) : (
+                      <div>
+                        <div style={{ color: '#22c55e', fontSize: 13, fontWeight: 600, marginBottom: 8 }}>
+                          ✅ Purchase successful!
+                        </div>
+                        <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
+                          <div style={{ marginBottom: 4 }}>Your license key has been generated.</div>
+                          <div style={{
+                            display: 'flex', alignItems: 'center', gap: 6,
+                            padding: '8px 10px', background: 'rgba(0,0,0,0.2)',
+                            borderRadius: 6, fontFamily: 'var(--font-mono)', fontSize: 12,
+                          }}>
+                            <span>{purchaseResult.licenseKey}</span>
+                            <CopyButton text={purchaseResult.licenseKey} />
+                          </div>
+                          <div style={{ marginTop: 8, fontSize: 10, color: 'var(--text-dim)' }}>
+                            A copy has also been sent to your email.
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      </PayPalProvider>
 
       {/* Activate License */}
       <div className="config-panel">
@@ -314,12 +361,13 @@ export default function SubscriptionPlans({ onNavigate, onUpgrade }) {
       <div className="config-panel" style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
         <h3>💳 Payment Information</h3>
         <p>
-          Payments are processed securely via <strong>PayPal</strong>.
-          All transactions go to <strong>josejaimejulia7@gmail.com</strong>.
+          Payments are processed securely via <strong>PayPal</strong> or <strong>Stripe</strong>.
+          PayPal payments go to <strong>josejaimejulia7@gmail.com</strong>.
+          Stripe payments support all major credit/debit cards.
         </p>
         <p style={{ marginTop: 8 }}>
-          After payment, your license key will be delivered to your email within 5 minutes.
-          You can also activate it instantly on this page.
+          After payment, your license key is generated instantly and displayed on screen.
+          A copy is also sent to your email within 5 minutes.
         </p>
         <p style={{ marginTop: 8, color: 'var(--text-dim)' }}>
           Subscriptions auto-renew monthly. Cancel anytime from your account settings.

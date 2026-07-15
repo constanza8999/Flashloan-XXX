@@ -123,7 +123,7 @@ export function hasChainAccess(userTier, chainId) {
 
 // ─── License Key Generation ────────────────────────────────────────────
 
-function generateLicenseKey() {
+export function generateLicenseKey() {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
   const segments = []
   for (let s = 0; s < 4; s++) {

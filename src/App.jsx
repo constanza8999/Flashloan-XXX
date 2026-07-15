@@ -25,7 +25,7 @@ import PricePredictor from './components/PricePredictor'
 import { Web3Provider } from './context/Web3Context'
 import { SubscriptionProvider, useSubscription } from './context/SubscriptionContext'
 import AuthPage from './components/AuthPage'
-
+import ProtectedFeature from './components/ProtectedFeature'
 import SubscriptionPlans from './components/SubscriptionPlans'
 import AdminPanel from './components/AdminPanel'
 
@@ -174,28 +174,31 @@ function useTheme() {
 
 const TAB_RENDER_MAP = {
   dashboard:        (p) => <Dashboard onNavigate={p.setActiveTab} />,
-  arbitrage:        () => <ArbitrageDashboard />,
-  'mev-bot':        () => <MevBot />,
+  // ─── Pro features ─────────────────────────────────────────
+  arbitrage:        (p) => <ProtectedFeature featureId='arbitrage' onNavigate={p.setActiveTab}><ArbitrageDashboard /></ProtectedFeature>,
+  'mev-bot':        (p) => <ProtectedFeature featureId='mev-bot' onNavigate={p.setActiveTab}><MevBot /></ProtectedFeature>,
+  'send-polygon':   (p) => <ProtectedFeature featureId='send-polygon' onNavigate={p.setActiveTab}><SendPolygon /></ProtectedFeature>,
+  'send-arbitrum':  (p) => <ProtectedFeature featureId='send-arbitrum' onNavigate={p.setActiveTab}><SendArbitrum /></ProtectedFeature>,
+  withdraw:         (p) => <ProtectedFeature featureId='withdraw' onNavigate={p.setActiveTab}><ProfitWithdraw /></ProtectedFeature>,
+  telegram:         (p) => <ProtectedFeature featureId='telegram' onNavigate={p.setActiveTab}><TelegramSettings /></ProtectedFeature>,
+  'flashbots-bundle': (p) => <ProtectedFeature featureId='flashbots-bundle' onNavigate={p.setActiveTab}><SendFlashbotsBundle /></ProtectedFeature>,
+  'flash-send':     (p) => <ProtectedFeature featureId='flash-send' onNavigate={p.setActiveTab}><FlashSend /></ProtectedFeature>,
+  'gasless-relay':  (p) => <ProtectedFeature featureId='gasless-relay' onNavigate={p.setActiveTab}><GaslessRelay /></ProtectedFeature>,
+  // ─── Enterprise features ───────────────────────────────────
+  'auto-bot':       (p) => <ProtectedFeature featureId='auto-bot' onNavigate={p.setActiveTab}><AutoBot /></ProtectedFeature>,
+  mempool:          (p) => <ProtectedFeature featureId='mempool' onNavigate={p.setActiveTab}><MempoolWatcher /></ProtectedFeature>,
+  propagation:      (p) => <ProtectedFeature featureId='propagation' onNavigate={p.setActiveTab}><PropagationNetwork /></ProtectedFeature>,
+  'cross-chain':    (p) => <ProtectedFeature featureId='cross-chain' onNavigate={p.setActiveTab}><CrossChainBridge /></ProtectedFeature>,
+  'p2p-network':    (p) => <ProtectedFeature featureId='p2p-network' onNavigate={p.setActiveTab}><P2PNetwork /></ProtectedFeature>,
+  'relay-nodes':    (p) => <ProtectedFeature featureId='relay-nodes' onNavigate={p.setActiveTab}><RelayNodes /></ProtectedFeature>,
+  predictor:        (p) => <ProtectedFeature featureId='predictor' onNavigate={p.setActiveTab}><PricePredictor /></ProtectedFeature>,
+  // ─── Free / unrestricted features ──────────────────────────
   balances:         () => <BalanceChecker />,
   'send-bsc':       () => <SendBSC />,
   'send-eth':       () => <SendETH />,
-  'send-polygon':   () => <SendPolygon />,
-  'send-arbitrum':  () => <SendArbitrum />,
   'token-info':     () => <TokenInfo />,
-  'auto-bot':       () => <AutoBot />,
-  mempool:          () => <MempoolWatcher />,
   history:          () => <TransactionHistory />,
-  withdraw:         () => <ProfitWithdraw />,
-  telegram:         () => <TelegramSettings />,
-  'flashbots-bundle': () => <SendFlashbotsBundle />,
-  'flash-send':     () => <FlashSend />,
-  'gasless-relay':  () => <GaslessRelay />,
-  propagation:      () => <PropagationNetwork />,
-  'cross-chain':    () => <CrossChainBridge />,
-  'p2p-network':    () => <P2PNetwork />,
-  'relay-nodes':    () => <RelayNodes />,
-  predictor:        () => <PricePredictor />,
-  subscription:     () => <SubscriptionPlans onNavigate={setActiveTab} />,
+  subscription:     (p) => <SubscriptionPlans onNavigate={p.setActiveTab} />,
   'admin-panel':    () => <AdminPanel />,
   auth:             (p) => <AuthPage onNavigate={p.setActiveTab} />,
 }
