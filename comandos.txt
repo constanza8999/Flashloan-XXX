@@ -1,2 +1,0 @@
-$env:BSC_PRIVATE_KEY = "b0923ba390d26045270411aad3b6edb481e44f204b28ac547273516efa44c5ca"
-python scriptflasher5555.py send-bsc --amount 0.001 --to  --priority-gwei 1.5 --max-fee-gwei 5
