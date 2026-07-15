@@ -4,6 +4,7 @@ import { POPULAR_ARBITRUM, ARBITRUM_RPCS, ARBITRUM_CHAIN_ID, TRANSFER_SELECTOR, 
 import { useProvider } from '../hooks'
 import { getTokenDecimals, getTokenSymbol, encodeTransfer } from '../utils'
 import { useWeb3 } from '../context/Web3Context'
+import CopyButton from './shared/CopyButton'
 import SigningMethod from './SigningMethod'
 import useTransactionHistory from '../hooks/useTransactionHistory'
 import useTelegram from '../hooks/useTelegram'
@@ -301,6 +302,7 @@ export default function SendArbitrum() {
           {txResult.txHash && (
             <div className="result-hash">
               <span className="mono">{txResult.txHash}</span>
+              <CopyButton text={txResult.txHash} />
               <a href={txResult.explorerUrl} target="_blank" rel="noopener noreferrer" className="explorer-link">
                 View on Arbiscan →
               </a>

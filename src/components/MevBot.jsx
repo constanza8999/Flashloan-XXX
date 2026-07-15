@@ -9,6 +9,7 @@ import { getTokenDecimals, getTokenSymbol, encodeTransfer } from '../utils'
 import { signTxForBundle, sendPrivateTx, getGasPrice } from '../utils/flashbots'
 import { useWeb3 } from '../context/Web3Context'
 import useTransactionHistory from '../hooks/useTransactionHistory'
+import CopyButton from './shared/CopyButton'
 import PillBadge from './shared/PillBadge'
 import ConfigPanel from './shared/ConfigPanel'
 import ResultPanel from './shared/ResultPanel'
@@ -247,9 +248,10 @@ export default function MevBot() {
             <div className="result-item"><span className="ri-label">Recipient</span><span className="ri-value mono">{result.recipient?.slice(0, 10)}...{result.recipient?.slice(-6)}</span></div>
             <div className="result-item"><span className="ri-label">Strategy</span><span className="ri-value">{STRATEGIES.find(s => s.id === selectedStrategy)?.name || 'MEV Strategy'}</span></div>
           </div>
-          <div style={{ marginTop: 12, fontSize: 12, color: 'var(--text-secondary)' }}>
+          <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', fontSize: 12, color: 'var(--text-secondary)' }}>
+            <CopyButton text={result.txHash} />
             <a href={`https://etherscan.io/tx/${result.txHash}`} target="_blank" rel="noreferrer" style={{ color: '#60a5fa' }}>View on Etherscan →</a>
-            <span style={{ margin: '0 8px', color: '#555' }}>|</span>
+            <span style={{ color: '#555' }}>|</span>
             <a href={`https://protect.flashbots.net/tx/${result.txHash}`} target="_blank" rel="noreferrer" style={{ color: '#60a5fa' }}>View on Flashbots Tracker →</a>
           </div>
         </ResultPanel>

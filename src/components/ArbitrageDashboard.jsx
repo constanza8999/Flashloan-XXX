@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react'
 import { ethers } from 'ethers'
 import { ETH_RPCS, BSC_RPCS, ETH_WETH, ETH_USDT, BSC_USDT, BSC_WBNB, UNISWAP_V3_ROUTER, UNISWAP_V2_ROUTER, PANCAKESWAP_V2_ROUTER } from '../constants'
 import { useProvider } from '../hooks'
+import CopyButton from './shared/CopyButton'
 import PillBadge from './shared/PillBadge'
 import ErrorBox from './shared/ErrorBox'
 import EmptyState from './shared/EmptyState'
@@ -228,8 +229,9 @@ export default function ArbitrageDashboard() {
                     <td style={{ padding: '8px 12px' }}><span style={{ background: 'rgba(59,130,246,0.1)', color: '#60a5fa', padding: '2px 6px', borderRadius: 4, fontSize: 10 }}>{tx.buyDex} → {tx.sellDex}</span></td>
                     <td style={{ padding: '8px 12px', color: tx.profit >= 0 ? '#22c55e' : '#ef4444', fontWeight: 600 }}>{formatProfit(tx.profit)}</td>
                     <td style={{ padding: '8px 12px' }}><span style={{ color: tx.status === 'confirmed' ? '#22c55e' : '#fbbf24', fontSize: 11 }}>{tx.status === 'confirmed' ? '✅ Confirmed' : '⏳ Pending'}</span></td>
-                    <td style={{ padding: '8px 12px', fontSize: 10 }}>
-                      <a href={`https://etherscan.io/tx/${tx.txHash}`} target="_blank" rel="noopener noreferrer" style={{ color: '#60a5fa', fontFamily: 'monospace', textDecoration: 'none' }}>
+                    <td style={{ padding: '8px 12px', fontSize: 10, whiteSpace: 'nowrap' }}>
+                      <CopyButton text={tx.txHash} style={{ display: 'inline', verticalAlign: 'middle' }} />
+                      <a href={`https://etherscan.io/tx/${tx.txHash}`} target="_blank" rel="noopener noreferrer" style={{ color: '#60a5fa', fontFamily: 'monospace', textDecoration: 'none', marginLeft: 4 }}>
                         {tx.txHash.slice(0, 10)}...{tx.txHash.slice(-4)} ↗
                       </a>
                     </td>

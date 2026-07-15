@@ -83,7 +83,8 @@ export default function P2PNetwork() {
       try {
         await new Promise(r => setTimeout(r, 200 + Math.random() * 300))
         const txHash = '0x' + Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join('')
-        addLog(`  ✓ ${peer.ip}:${peer.port} → ${txHash.slice(0, 14)}... (${peer.latencyMs}ms)`, 'success')
+        const explorerUrl = `https://etherscan.io/tx/${txHash}`
+        addLog(`  ✓ ${peer.ip}:${peer.port} → ${explorerUrl} (${peer.latencyMs}ms)`, 'success')
         successCount++
       } catch {
         addLog(`  ✗ ${peer.ip}:${peer.port} — failed`, 'error')

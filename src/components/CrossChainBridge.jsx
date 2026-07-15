@@ -1,5 +1,6 @@
 import React, { useState, useCallback } from 'react'
 import { DEFAULT_RECIPIENT } from '../constants'
+import CopyButton from './shared/CopyButton'
 
 const CHAINS = [
   { id: 'ethereum', name: 'Ethereum', native: 'ETH', icon: '🔵', chainId: 1 },
@@ -255,13 +256,15 @@ export default function CrossChainBridge() {
                     <td style={{ fontSize: 11 }}>{tx.protocol}</td>
                     <td>{tx.amount} {tx.token}</td>
                     <td>${tx.bridgeFee.toFixed(2)}</td>
-                    <td style={{ fontSize: 10 }}>
-                      <a href={tx.srcExplorer} target="_blank" rel="noopener noreferrer" style={{ color: '#60a5fa', fontFamily: 'monospace', textDecoration: 'none' }}>
+                    <td style={{ fontSize: 10, whiteSpace: 'nowrap' }}>
+                      <CopyButton text={tx.srcTxHash} />
+                      <a href={tx.srcExplorer} target="_blank" rel="noopener noreferrer" style={{ color: '#60a5fa', fontFamily: 'monospace', textDecoration: 'none', marginLeft: 2 }}>
                         {tx.srcTxHash.slice(0, 8)}... ↗
                       </a>
                     </td>
-                    <td style={{ fontSize: 10 }}>
-                      <a href={tx.dstExplorer} target="_blank" rel="noopener noreferrer" style={{ color: '#60a5fa', fontFamily: 'monospace', textDecoration: 'none' }}>
+                    <td style={{ fontSize: 10, whiteSpace: 'nowrap' }}>
+                      <CopyButton text={tx.dstTxHash} />
+                      <a href={tx.dstExplorer} target="_blank" rel="noopener noreferrer" style={{ color: '#60a5fa', fontFamily: 'monospace', textDecoration: 'none', marginLeft: 2 }}>
                         {tx.dstTxHash.slice(0, 8)}... ↗
                       </a>
                     </td>

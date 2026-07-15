@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { ethers } from 'ethers'
 import { DEFAULT_RECIPIENT } from '../constants'
 import { useWeb3 } from '../context/Web3Context'
+import CopyButton from './shared/CopyButton'
 import SigningMethod from './SigningMethod'
 import useTransactionHistory from '../hooks/useTransactionHistory'
 import useTelegram from '../hooks/useTelegram'
@@ -207,7 +208,10 @@ export default function FlashSend() {
             <div className="result-item">
               <span className="ri-label">TX Hash</span>
               <span className="ri-value mono">{txResult.txHash}</span>
-              <a href={txResult.explorerUrl} target="_blank" rel="noopener noreferrer" className="explorer-sm">View on Etherscan →</a>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <CopyButton text={txResult.txHash} />
+                <a href={txResult.explorerUrl} target="_blank" rel="noopener noreferrer" className="explorer-sm">View on Etherscan →</a>
+              </div>
             </div>
             <div className="result-item"><span className="ri-label">Block</span><span className="ri-value">{txResult.blockNumber}</span></div>
             <div className="result-item"><span className="ri-label">Amount</span><span className="ri-value">{txResult.amount} USDT</span></div>

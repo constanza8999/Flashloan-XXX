@@ -16,8 +16,17 @@ import ErrorBox from './shared/ErrorBox'
 const DEFAULT_ENDPOINTS = [
   { name: 'Flashbots Protect', url: ETH_PROTECT_RPC, priority: 10, active: true },
   { name: 'Flashbots Relay', url: 'https://relay.flashbots.net', priority: 9, active: true },
-  { name: 'BloXroute', url: 'https://eth-us-east.blxrbdn.com', priority: 7, active: false },
+  { name: 'MEV Blocker', url: 'https://rpc.mevblocker.io', priority: 8, active: true },
+  { name: 'BloXroute (US East)', url: 'https://eth-us-east.blxrbdn.com', priority: 7, active: true },
+  { name: 'BloXroute (Virginia)', url: 'https://virginia.rpc.blxrbdn.com', priority: 7, active: true },
+  { name: 'Titan Relay', url: 'https://rpc.titanrelay.xyz', priority: 6, active: false },
   { name: 'Eden Network', url: 'https://eth.edennetwork.io', priority: 6, active: false },
+  { name: 'beaverbuild', url: 'https://rpc.beaverbuild.org', priority: 5, active: false },
+  { name: 'rsync builder', url: 'https://rpc.rsyncbuilder.xyz', priority: 5, active: false },
+  { name: 'Manifold', url: 'https://rpc.manifoldlabs.com', priority: 4, active: false },
+  { name: 'Payload', url: 'https://rpc.payload.de', priority: 4, active: false },
+  { name: 'Builder0x69', url: 'https://builder0x69.io', priority: 3, active: false },
+  { name: 'ETH Singapore', url: 'https://eth-builder.gateway.eth.si', priority: 3, active: false },
 ]
 
 const SUPPORTED_CHAINS = [

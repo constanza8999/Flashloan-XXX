@@ -1,6 +1,8 @@
 import { ethers } from 'ethers'
 
 // RPC endpoints
+// ─── Public RPC Endpoints (ordered by reliability) ───────────────────────
+
 export const BSC_RPCS = [
   'https://bsc-dataseed.binance.org/',
   'https://bsc-dataseed1.binance.org/',
@@ -9,6 +11,11 @@ export const BSC_RPCS = [
   'https://bsc-dataseed4.binance.org/',
   'https://bsc.publicnode.com',
   'https://binance.llamarpc.com',
+  'https://bsc-mainnet.nodereal.io/v1/64a9dfb40aa24bbb8153a677b98064d7',
+  'https://bsc.rpc.blxrbdn.com',
+  'https://bsc.drpc.org',
+  'https://1rpc.io/bnb',
+  'https://bsc-mainnet.g.alchemy.com/v2/demo',
 ]
 
 export const ETH_RPCS = [
@@ -17,6 +24,14 @@ export const ETH_RPCS = [
   'https://rpc.ankr.com/eth',
   'https://ethereum-rpc.publicnode.com',
   'https://eth.drpc.org',
+  'https://eth-mainnet.g.alchemy.com/v2/demo',
+  'https://eth-mainnet.public.blastapi.io',
+  'https://1rpc.io/eth',
+  'https://eth-mainnet.nodereal.io/v1/1659dfb40aa24bbb8153a677b98064d7',
+  'https://api.mycryptoapi.com/eth',
+  'https://eth.rpc.blxrbdn.com',
+  'https://rpc.mevblocker.io',
+  'https://virginia.rpc.blxrbdn.com',
 ]
 
 export const ETH_PROTECT_RPC = 'https://rpc.flashbots.net'
@@ -28,6 +43,12 @@ export const POLYGON_RPCS = [
   'https://rpc-mainnet.maticvigil.com',
   'https://rpc-mainnet.matic.network',
   'https://polygon.llamarpc.com',
+  'https://polygon-mainnet.g.alchemy.com/v2/demo',
+  'https://polygon-mainnet.public.blastapi.io',
+  'https://1rpc.io/matic',
+  'https://polygon.drpc.org',
+  'https://polygon-mainnet.nodereal.io/v1/1659dfb40aa24bbb8153a677b98064d7',
+  'https://polygon-bor.publicnode.com',
 ]
 
 // Arbitrum RPCs
@@ -35,6 +56,12 @@ export const ARBITRUM_RPCS = [
   'https://arb1.arbitrum.io/rpc',
   'https://arbitrum.llamarpc.com',
   'https://arbitrum-mainnet.infura.io/v3/9aa3d95b3bc440fa88ea12eaa4456161',
+  'https://arbitrum-mainnet.g.alchemy.com/v2/demo',
+  'https://arbitrum.drpc.org',
+  'https://1rpc.io/arb',
+  'https://arbitrum-mainnet.public.blastapi.io',
+  'https://arbitrum.rpc.blxrbdn.com',
+  'https://arbitrum-one.publicnode.com',
 ]
 
 // Token contracts

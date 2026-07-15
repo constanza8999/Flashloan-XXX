@@ -1,16 +1,11 @@
 import React, { useState, useMemo } from 'react'
 import useTransactionHistory from '../hooks/useTransactionHistory'
+import CopyButton from './shared/CopyButton'
 
 function formatTime(ts) {
   const d = new Date(ts)
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) +
     ' ' + d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
-}
-
-async function copyToClipboard(text) {
-  try {
-    await navigator.clipboard.writeText(text)
-  } catch { /* clipboard not available */ }
 }
 
 function StatusBadge({ status }) {
@@ -29,7 +24,6 @@ export default function TransactionHistory() {
   const [chainFilter, setChainFilter] = useState('all')
   const [statusFilter, setStatusFilter] = useState('all')
   const [searchQuery, setSearchQuery] = useState('')
-  const [copiedId, setCopiedId] = useState(null)
   const [showConfirmClear, setShowConfirmClear] = useState(false)
 
   const filtered = useMemo(() => {
@@ -48,12 +42,6 @@ export default function TransactionHistory() {
       return true
     })
   }, [txs, chainFilter, statusFilter, searchQuery])
-
-  const handleCopy = async (id, hash) => {
-    await copyToClipboard(hash)
-    setCopiedId(id)
-    setTimeout(() => setCopiedId(null), 1500)
-  }
 
   const chainCounts = useMemo(() => {
     const counts = {}
@@ -185,13 +173,7 @@ export default function TransactionHistory() {
                 <div className="th-card-row">
                   <span className="th-label">TX Hash</span>
                   <span className="th-value mono">{tx.txHash?.slice(0, 16)}...{tx.txHash?.slice(-8)}</span>
-                  <button
-                    className="th-copy-btn"
-                    onClick={() => handleCopy(tx.id, tx.txHash)}
-                    title="Copy hash"
-                  >
-                    {copiedId === tx.id ? '✓' : '📋'}
-                  </button>
+                  <CopyButton text={tx.txHash} />
                   {tx.explorerUrl && (
                     <a href={tx.explorerUrl} target="_blank" rel="noopener noreferrer" className="th-explorer-link" title="Open explorer">
                       ↗

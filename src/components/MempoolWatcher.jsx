@@ -1,6 +1,7 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react'
 import { ethers } from 'ethers'
 import { BSC_RPCS, ETH_RPCS } from '../constants'
+import CopyButton from './shared/CopyButton'
 
 export default function MempoolWatcher() {
   const [chain, setChain] = useState('bsc')
@@ -160,7 +161,10 @@ export default function MempoolWatcher() {
                 <tr key={tx.hash}>
                   <td className="dim">{tx.id}</td>
                   <td className="dim">{tx.time}</td>
-                  <td className="mono">{tx.hash.slice(0, 18)}...{tx.hash.slice(-8)}</td>
+                  <td className="mono" style={{ whiteSpace: 'nowrap' }}>
+                    <CopyButton text={tx.hash} />
+                    {tx.hash.slice(0, 18)}...{tx.hash.slice(-8)}
+                  </td>
                   <td>
                     <a href={explorer + tx.hash} target="_blank" rel="noopener noreferrer" className="explorer-sm">
                       View →

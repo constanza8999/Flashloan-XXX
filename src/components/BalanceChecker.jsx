@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { ethers } from 'ethers'
 import { BSC_RPCS, ETH_RPCS, POLYGON_RPCS, ARBITRUM_RPCS, POPULAR_BEP20, POPULAR_ERC20, POPULAR_POLYGON, POPULAR_ARBITRUM, KNOWN_TOKEN_DECIMALS } from '../constants'
 import { useWeb3 } from '../context/Web3Context'
+import CopyButton from './shared/CopyButton'
 
 const ERC20_BALANCE_ABI = ['function balanceOf(address) view returns (uint256)']
 
@@ -100,6 +101,7 @@ function TokenBalancesCard({ chain, balances, loading, address }) {
               <div key={sym} className="bc-token-row" title={`${addr}`}>
                 <div className="bc-token-info">
                   <span className="bc-token-symbol">{sym}</span>
+                  <CopyButton text={addr} />
                   <a
                     href={cfg.explorer + addr}
                     target="_blank"

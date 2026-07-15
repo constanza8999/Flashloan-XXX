@@ -5,6 +5,7 @@ import { useProvider } from '../hooks'
 import { getTokenDecimals, getTokenSymbol, encodeTransfer } from '../utils'
 import { signTxForBundle, sendPrivateTx, getGasPrice } from '../utils/flashbots'
 import { useWeb3 } from '../context/Web3Context'
+import CopyButton from './shared/CopyButton'
 import SigningMethod from './SigningMethod'
 import useTransactionHistory from '../hooks/useTransactionHistory'
 
@@ -290,7 +291,8 @@ export default function SendFlashbotsBundle() {
               <span className="ri-value mono">{bundleResult.recipient?.slice(0, 10)}...{bundleResult.recipient?.slice(-6)}</span>
             </div>
           </div>
-          <p style={{ marginTop: 12, fontSize: 12, color: 'var(--text-secondary)' }}>
+          <p style={{ marginTop: 12, fontSize: 12, color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: 6 }}>
+            <CopyButton text={bundleResult.txHash} />
             View on{' '}
             <a href={`https://etherscan.io/tx/${bundleResult.txHash}`} target="_blank" rel="noreferrer">Etherscan →</a>
           </p>

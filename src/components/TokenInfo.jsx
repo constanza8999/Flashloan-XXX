@@ -3,6 +3,7 @@ import { ethers } from 'ethers'
 import { POPULAR_BEP20, POPULAR_ERC20, BSC_RPCS, ETH_RPCS } from '../constants'
 import { useProvider } from '../hooks'
 import { getTokenDecimals, getTokenSymbol } from '../utils'
+import CopyButton from './shared/CopyButton'
 
 const ERC20_ABI = [
   'function symbol() view returns (string)',
@@ -136,7 +137,10 @@ export default function TokenInfo() {
             <div className="result-item">
               <span className="ri-label">Contract</span>
               <span className="ri-value mono">{result.address}</span>
-              <a href={explorer + result.address} target="_blank" rel="noopener noreferrer" className="explorer-sm">View on Explorer →</a>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <CopyButton text={result.address} />
+                <a href={explorer + result.address} target="_blank" rel="noopener noreferrer" className="explorer-sm">View on Explorer →</a>
+              </div>
             </div>
             <div className="result-item">
               <span className="ri-label">Symbol</span>
