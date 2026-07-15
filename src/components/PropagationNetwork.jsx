@@ -192,7 +192,9 @@ export default function PropagationNetwork() {
 
     if (results.length > 0) {
       const first = results[0]
-      const txId = addTx({ chain: `${selectedChain} (Propagation)`, status: 'broadcast', tokenSymbol: 'ETH', amount, recipient, sender: walletAddress || 'key-signed', txHash: first.txHash, explorerUrl: chainMeta ? `${chainMeta.explorer}/tx/${first.txHash}` : '', method: useWalletSign ? 'wallet' : 'key' })
+      const explorerUrl = chainMeta ? `${chainMeta.explorer}/tx/${first.txHash}` : `https://etherscan.io/tx/${first.txHash}`
+      addLog(`🔗 ${explorerUrl}`, 'link')
+      const txId = addTx({ chain: `${selectedChain} (Propagation)`, status: 'broadcast', tokenSymbol: 'ETH', amount, recipient, sender: walletAddress || 'key-signed', txHash: first.txHash, explorerUrl, method: useWalletSign ? 'wallet' : 'key' })
       if (w3) {
         setTimeout(async () => {
           try { const receipt = await w3.getTransactionReceipt(first.txHash); if (receipt?.blockNumber) { updateTxStatus(txId, 'confirmed', { blockNumber: receipt.blockNumber }); addLog(`✅ Tx confirmed in block ${receipt.blockNumber}`, 'profit') } } catch {}

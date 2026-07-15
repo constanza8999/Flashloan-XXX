@@ -952,6 +952,28 @@ select.input option {
   flex: 1;
 }
 
+.log-link {
+  color: var(--accent-blue);
+  text-decoration: underline;
+  font-weight: 500;
+  font-size: 11px;
+  word-break: break-all;
+}
+
+.log-link:hover {
+  color: var(--accent-blue-hover);
+  text-decoration: underline;
+}
+
+.log-entry.link {
+  color: var(--accent-blue);
+  background: rgba(59, 130, 246, 0.05);
+}
+
+.log-entry.link .log-msg {
+  font-size: 11px;
+}
+
 /* ============================================================
    Live Indicator (Mempool)
    ============================================================ */

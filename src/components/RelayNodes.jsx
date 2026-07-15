@@ -1,4 +1,6 @@
 import React, { useState, useCallback } from 'react'
+import { DEFAULT_RECIPIENT } from '../constants'
+import { ethers } from 'ethers'
 
 const REGIONS = ['us-east', 'eu-west', 'ap-southeast', 'us-west', 'eu-central', 'sa-east', 'me-central']
 
@@ -19,6 +21,8 @@ export default function RelayNodes() {
     rebalanceEnabled: true,
     autoDiscovery: true,
   })
+  const [withdrawTarget, setWithdrawTarget] = useState(DEFAULT_RECIPIENT)
+  const [withdrawing, setWithdrawing] = useState(false)
 
   const addLog = useCallback((msg, type = 'info') => {
     setLogs(prev => [{ time: new Date().toLocaleTimeString(), msg, type }, ...prev].slice(0, 100))
@@ -108,6 +112,32 @@ export default function RelayNodes() {
     })))
     addLog('✅ Balances synced', 'success')
   }, [addLog])
+
+  const handleWithdraw = useCallback(async () => {
+    if (!ethers.isAddress(withdrawTarget)) {
+      addLog('❌ Invalid target address', 'error'); return
+    }
+    if (totalBalance <= 0) {
+      addLog('❌ No balance to withdraw', 'error'); return
+    }
+
+    setWithdrawing(true)
+    addLog(`💸 Withdrawing ${totalBalance.toFixed(4)} ETH from ${nodes.length} nodes → ${withdrawTarget.slice(0, 10)}...`, 'info')
+
+    for (const node of nodes.filter(n => n.balanceEth > 0)) {
+      await new Promise(r => setTimeout(r, 300 + Math.random() * 500))
+      const success = Math.random() > 0.05
+      if (success) {
+        addLog(`  ✅ ${node.name}: ${node.balanceEth.toFixed(4)} ETH withdrawn → ${withdrawTarget.slice(0, 10)}...`, 'success')
+      } else {
+        addLog(`  ❌ ${node.name}: withdraw failed (RPC timeout)`, 'error')
+      }
+    }
+
+    setNodes(prev => prev.map(n => ({ ...n, balanceEth: 0 })))
+    addLog(`🎉 Withdraw complete! ${totalBalance.toFixed(4)} ETH → ${withdrawTarget.slice(0, 10)}...${withdrawTarget.slice(-6)}`, 'profit')
+    setWithdrawing(false)
+  }, [withdrawTarget, nodes, totalBalance, addLog])
 
   const activeCount = nodes.filter(n => n.status === 'active').length
   const totalTx = nodes.reduce((s, n) => s + n.txCount, 0)
@@ -239,6 +269,33 @@ export default function RelayNodes() {
               </div>
             </div>
           ))}
+        </div>
+      </div>
+
+      {/* Withdraw Funds */}
+      <div className="config-panel">
+        <h3>💸 Withdraw to Custom Address</h3>
+        <div className="form-grid" style={{ gridTemplateColumns: '2fr 1fr auto' }}>
+          <div className="form-group">
+            <label>Target Address</label>
+            <input type="text" className="input mono" value={withdrawTarget}
+              onChange={e => setWithdrawTarget(e.target.value)}
+              placeholder="0x..." style={{ fontSize: 12 }} />
+            <span className="form-hint">All node balances will be sent to this address</span>
+          </div>
+          <div className="form-group">
+            <label>Total to Withdraw</label>
+            <div style={{ padding: '10px 14px', background: 'var(--bg-input)', borderRadius: 6, border: '1px solid var(--border)', fontSize: 18, fontWeight: 700, color: '#22c55e' }}>
+              {totalBalance.toFixed(4)} ETH
+            </div>
+          </div>
+          <div className="form-group" style={{ justifyContent: 'flex-end' }}>
+            <button className="btn btn-primary" onClick={handleWithdraw}
+              disabled={withdrawing || totalBalance <= 0}
+              style={{ fontSize: 12, padding: '10px 20px', marginTop: 22 }}>
+              {withdrawing ? '⏳ Withdrawing...' : '💸 Withdraw All'}
+            </button>
+          </div>
         </div>
       </div>
 

@@ -1,17 +1,38 @@
-import React, { useState, useCallback } from 'react'
+import React, { useState, useCallback, useEffect } from 'react'
+
+const STORAGE_KEY = 'flashloan_p2p_peers'
+
+const DEFAULT_PEERS = [
+  { id: 1, ip: '127.0.0.1', port: 8546, region: 'local', status: 'connected', latencyMs: 2 },
+  { id: 2, ip: '10.0.0.5', port: 8547, region: 'us-east', status: 'connected', latencyMs: 45 },
+  { id: 3, ip: '54.12.45.67', port: 8545, region: 'eu-west', status: 'disconnected', latencyMs: 0 },
+]
+
+function loadSavedPeers() {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY)
+    if (saved) {
+      const parsed = JSON.parse(saved)
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed
+    }
+  } catch { /* corrupt data, use defaults */ }
+  return DEFAULT_PEERS
+}
 
 export default function P2PNetwork() {
-  const [peers, setPeers] = useState([
-    { id: 1, ip: '127.0.0.1', port: 8546, region: 'local', status: 'connected', latencyMs: 2 },
-    { id: 2, ip: '10.0.0.5', port: 8547, region: 'us-east', status: 'connected', latencyMs: 45 },
-    { id: 3, ip: '54.12.45.67', port: 8545, region: 'eu-west', status: 'disconnected', latencyMs: 0 },
-  ])
+  const [peers, setPeers] = useState(loadSavedPeers)
+
+  // Persist peers to localStorage on every change
+  useEffect(() => {
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(peers)) } catch { /* storage full */ }
+  }, [peers])
   const [newPeerIp, setNewPeerIp] = useState('')
   const [newPeerPort, setNewPeerPort] = useState('8545')
   const [newPeerRegion, setNewPeerRegion] = useState('auto')
   const [broadcastTx, setBroadcastTx] = useState('')
   const [logs, setLogs] = useState([])
   const [loading, setLoading] = useState(false)
+  const [lastBroadcast, setLastBroadcast] = useState(null)
 
   const addLog = useCallback((msg, type = 'info') => {
     setLogs(prev => [{ time: new Date().toLocaleTimeString(), msg, type }, ...prev].slice(0, 100))
@@ -51,6 +72,7 @@ export default function P2PNetwork() {
     if (!broadcastTx) { addLog('❌ No transaction data', 'error'); return }
 
     setLoading(true)
+    setLastBroadcast(null)
     const activePeers = peers.filter(p => p.status === 'connected')
     if (activePeers.length === 0) { addLog('❌ No connected peers', 'error'); setLoading(false); return }
 
@@ -69,31 +91,71 @@ export default function P2PNetwork() {
     }
 
     addLog(`✅ P2P broadcast: ${successCount}/${activePeers.length} peers confirmed`, 'profit')
+    setLastBroadcast({ successCount, total: activePeers.length })
     setLoading(false)
   }, [broadcastTx, peers, addLog])
 
-  const handleDiscover = useCallback(() => {
-    addLog('🔍 Scanning for new peers on network...', 'info')
-    const discovered = [
-      { ip: `192.168.${Math.floor(Math.random() * 255)}.${Math.floor(Math.random() * 255)}`, port: 8545 },
-      { ip: `10.${Math.floor(Math.random() * 10)}.${Math.floor(Math.random() * 255)}.${Math.floor(Math.random() * 255)}`, port: 8546 },
-    ]
+  const handleDiscover = useCallback((autoConnect = false) => {
+    const label = autoConnect ? '🔍 Auto-discovering peers and connecting...' : '🔍 Scanning for new peers on network...'
+    addLog(label, 'info')
+    const count = autoConnect ? 3 : 2
+    const discovered = Array.from({ length: count }, (_, i) => ({
+      ip: i === 0
+        ? `192.168.${Math.floor(Math.random() * 255)}.${Math.floor(Math.random() * 255)}`
+        : i === 1
+        ? `10.${Math.floor(Math.random() * 10)}.${Math.floor(Math.random() * 255)}.${Math.floor(Math.random() * 255)}`
+        : `172.16.${Math.floor(Math.random() * 255)}.${Math.floor(Math.random() * 255)}`,
+      port: [8545, 8546, 8547][i],
+    }))
+
+    let newCount = 0
+    let connectCount = 0
+
     discovered.forEach(p => {
       if (!peers.some(e => e.ip === p.ip)) {
+        const region = autoConnect
+          ? ['us-east', 'eu-west', 'ap-southeast', 'us-west', 'eu-central'][Math.floor(Math.random() * 5)]
+          : 'discovered'
+        const connected = autoConnect ? Math.random() > 0.15 : false
         const newPeer = {
           id: Date.now() + Math.floor(Math.random() * 1000),
           ip: p.ip,
           port: p.port,
-          region: 'discovered',
-          status: 'disconnected',
-          latencyMs: 0,
+          region,
+          status: connected ? 'connected' : 'disconnected',
+          latencyMs: connected ? Math.floor(Math.random() * 80 + 5) : 0,
         }
         setPeers(prev => [...prev, newPeer])
-        addLog(`🔍 Discovered: ${p.ip}:${p.port}`, 'info')
+        newCount++
+        if (connected) {
+          connectCount++
+          addLog(`🔗 Discovered & connected: ${p.ip}:${p.port} (${region})`, 'success')
+        } else {
+          addLog(`🔍 ${autoConnect ? 'Discovered' : 'Found'}: ${p.ip}:${p.port} (${region})`,
+            autoConnect ? 'warning' : 'info')
+        }
       }
     })
-    addLog(`✅ Discovery complete`, 'success')
+
+    if (autoConnect) {
+      // Retry existing disconnected peers
+      setPeers(prev => prev.map(p => {
+        if (p.status === 'disconnected' && Math.random() > 0.2) {
+          connectCount++
+          return { ...p, status: 'connected', latencyMs: Math.floor(Math.random() * 80 + 5) }
+        }
+        return p
+      }))
+    }
+
+    addLog(autoConnect
+      ? `✅ Auto-discover complete: ${newCount} new, ${connectCount} connected`
+      : `✅ Discovery complete`, autoConnect ? 'profit' : 'success')
   }, [peers, addLog])
+
+  const handleAutoDiscoverConnect = useCallback(() => {
+    handleDiscover(true)
+  }, [handleDiscover])
 
   const gridAreas = ['us-east', 'eu-west', 'ap-southeast', 'us-west', 'eu-central']
 
@@ -136,6 +198,9 @@ export default function P2PNetwork() {
         <button className="btn btn-primary" onClick={handleDiscover} style={{ fontSize: 12, padding: '8px 16px' }}>
           🔍 Discover Peers
         </button>
+        <button className="btn btn-success" onClick={handleAutoDiscoverConnect} style={{ fontSize: 12, padding: '8px 16px' }}>
+          🚀 Auto Discover & Connect
+        </button>
         <button className="btn btn-secondary" onClick={() => {
           setPeers(prev => prev.map(p => ({ ...p, status: 'connected', latencyMs: Math.floor(Math.random() * 100) })))
           addLog('🔄 Connected to all peers', 'success')
@@ -144,6 +209,7 @@ export default function P2PNetwork() {
         </button>
         <button className="btn btn-secondary" onClick={() => {
           setPeers([])
+          try { localStorage.removeItem(STORAGE_KEY) } catch {}
           addLog('🗑 Cleared all peers', 'warning')
         }} style={{ fontSize: 12, padding: '8px 16px' }}>
           🗑 Clear All
@@ -241,6 +307,24 @@ export default function P2PNetwork() {
           </button>
         </div>
       </div>
+
+      {/* Broadcast Result */}
+      {lastBroadcast && (
+        <div className="config-panel" style={{ borderColor: 'rgba(34,197,94,0.3)' }}>
+          <h3>📡 Broadcast Result</h3>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+            <div>
+              <span style={{ color: lastBroadcast.successCount > 0 ? '#22c55e' : '#ef4444', fontWeight: 700, fontSize: 18 }}>
+                {lastBroadcast.successCount}/{lastBroadcast.total}
+              </span>
+              <span style={{ color: '#888', fontSize: 12, marginLeft: 4 }}>peers confirmed</span>
+            </div>
+            <div style={{ fontSize: 12, color: '#a3a3a3' }}>
+              Simulated broadcast — no real chain interaction. Check the Transaction History tab for real TX tracking.
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Activity Log */}
       {logs.length > 0 && (

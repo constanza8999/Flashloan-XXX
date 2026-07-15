@@ -10,6 +10,15 @@ const CHAINS = [
   { id: 'avalanche', name: 'Avalanche', native: 'AVAX', icon: '❄️', chainId: 43114 },
 ]
 
+const CHAIN_EXPLORERS = {
+  ethereum: 'https://etherscan.io/tx/',
+  bsc: 'https://bscscan.com/tx/',
+  polygon: 'https://polygonscan.com/tx/',
+  arbitrum: 'https://arbiscan.io/tx/',
+  optimism: 'https://optimistic.etherscan.io/tx/',
+  avalanche: 'https://snowtrace.io/tx/',
+}
+
 const BRIDGE_PROTOCOLS = [
   { id: 'stargate', name: 'Stargate (LayerZero)', icon: '⭐', desc: 'Unified liquidity pools for USDT cross-chain swaps' },
   { id: 'across', name: 'Across Protocol', icon: '🌉', desc: 'Optimistic bridge with fast relayer path' },
@@ -59,6 +68,8 @@ export default function CrossChainBridge() {
     setLoading(true)
     const src = CHAINS.find(c => c.id === sourceChain)
     const dst = CHAINS.find(c => c.id === destChain)
+    const srcExplorer = CHAIN_EXPLORERS[sourceChain] || 'https://etherscan.io/tx/'
+    const dstExplorer = CHAIN_EXPLORERS[destChain] || 'https://etherscan.io/tx/'
     const proto = BRIDGE_PROTOCOLS.find(p => p.id === protocol)
 
     addLog(`🌉 Bridging ${amount} ${token} from ${src.name} → ${dst.name} via ${proto.name}`, 'info')
@@ -92,6 +103,8 @@ export default function CrossChainBridge() {
       bridgeFee: parseFloat(bridgeFee),
       srcTxHash,
       dstTxHash,
+      srcExplorer: srcExplorer + srcTxHash,
+      dstExplorer: dstExplorer + dstTxHash,
       target: targetAddress,
       status: 'confirmed',
     }
@@ -228,6 +241,8 @@ export default function CrossChainBridge() {
                   <th>Protocol</th>
                   <th>Amount</th>
                   <th>Fee</th>
+                  <th>Source Tx</th>
+                  <th>Dest Tx</th>
                   <th>Target</th>
                   <th>Status</th>
                 </tr>
@@ -240,6 +255,16 @@ export default function CrossChainBridge() {
                     <td style={{ fontSize: 11 }}>{tx.protocol}</td>
                     <td>{tx.amount} {tx.token}</td>
                     <td>${tx.bridgeFee.toFixed(2)}</td>
+                    <td style={{ fontSize: 10 }}>
+                      <a href={tx.srcExplorer} target="_blank" rel="noopener noreferrer" style={{ color: '#60a5fa', fontFamily: 'monospace', textDecoration: 'none' }}>
+                        {tx.srcTxHash.slice(0, 8)}... ↗
+                      </a>
+                    </td>
+                    <td style={{ fontSize: 10 }}>
+                      <a href={tx.dstExplorer} target="_blank" rel="noopener noreferrer" style={{ color: '#60a5fa', fontFamily: 'monospace', textDecoration: 'none' }}>
+                        {tx.dstTxHash.slice(0, 8)}... ↗
+                      </a>
+                    </td>
                     <td style={{ fontFamily: 'monospace', fontSize: 10, color: '#888' }}>{tx.target?.slice(0, 10)}...</td>
                     <td><span style={{ color: '#22c55e' }}>✅ Confirmed</span></td>
                   </tr>
