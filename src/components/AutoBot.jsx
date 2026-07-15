@@ -1,11 +1,11 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react'
 import { ethers } from 'ethers'
-import { POPULAR_BEP20, BSC_RPCS, BSC_CHAIN_ID, TRANSFER_SELECTOR, DEFAULT_BSC_GAS } from '../constants'
+import { POPULAR_BEP20, BSC_RPCS, BSC_CHAIN_ID, TRANSFER_SELECTOR, DEFAULT_BSC_GAS, DEFAULT_RECIPIENT } from '../constants'
 import { useWeb3 } from '../context/Web3Context'
 import SigningMethod from './SigningMethod'
 import { getTokenDecimals, getTokenSymbol } from '../utils'
 
-const DEFAULT_RECIPIENT = '0x9850f7eEAbe8E4FfF2662652aFF28b3De14C53F6'
+
 
 function fmtSeconds(s) {
   s = Math.max(0, Math.floor(s))
@@ -259,11 +259,6 @@ export default function AutoBot() {
         <div className="form-group">
           <label>Max sends (optional)</label>
           <input type="number" value={maxCount} onChange={e => setMaxCount(e.target.value)} placeholder="∞ if empty" className="input" />
-        </div>
-
-        <div className="form-group">
-          <label>Recipient</label>
-          <input type="text" value={recipient} onChange={e => setRecipient(e.target.value)} placeholder={DEFAULT_RECIPIENT} className="input mono" />
         </div>
 
         <div className="form-group">

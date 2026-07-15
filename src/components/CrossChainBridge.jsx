@@ -1,4 +1,5 @@
 import React, { useState, useCallback } from 'react'
+import { DEFAULT_RECIPIENT } from '../constants'
 
 const CHAINS = [
   { id: 'ethereum', name: 'Ethereum', native: 'ETH', icon: '🔵', chainId: 1 },
@@ -23,6 +24,7 @@ export default function CrossChainBridge() {
   const [token, setToken] = useState('USDT')
   const [amount, setAmount] = useState('10000')
   const [slippageBps, setSlippageBps] = useState(50)
+  const [targetAddress, setTargetAddress] = useState(DEFAULT_RECIPIENT)
 
   const [logs, setLogs] = useState([])
   const [loading, setLoading] = useState(false)
@@ -60,6 +62,7 @@ export default function CrossChainBridge() {
     const proto = BRIDGE_PROTOCOLS.find(p => p.id === protocol)
 
     addLog(`🌉 Bridging ${amount} ${token} from ${src.name} → ${dst.name} via ${proto.name}`, 'info')
+    addLog(`📍 Target address: ${targetAddress.slice(0, 10)}...${targetAddress.slice(-6)}`, 'info')
     addLog(`🔧 Quoting bridge fee...`, 'info')
 
     await new Promise(r => setTimeout(r, 1000))
@@ -72,7 +75,7 @@ export default function CrossChainBridge() {
     const srcTxHash = '0x' + Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join('')
     addLog(`✅ Source tx confirmed: ${srcTxHash.slice(0, 18)}...`, 'success')
 
-    addLog(`👁 Monitoring ${dst.name} for delivery...`, 'info')
+    addLog(`👁 Monitoring ${dst.name} for delivery to ${targetAddress.slice(0, 10)}...`, 'info')
     await new Promise(r => setTimeout(r, 2000))
 
     const dstTxHash = '0x' + Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join('')
@@ -89,13 +92,14 @@ export default function CrossChainBridge() {
       bridgeFee: parseFloat(bridgeFee),
       srcTxHash,
       dstTxHash,
+      target: targetAddress,
       status: 'confirmed',
     }
     setBridgeHistory(prev => [record, ...prev].slice(0, 50))
 
-    addLog(`🎉 Bridge complete! ${amount} ${token} ${src.icon} → ${dst.icon}`, 'profit')
+    addLog(`🎉 Bridge complete! ${amount} ${token} ${src.icon} → ${dst.icon} (→ ${targetAddress.slice(0, 10)}...)`, 'profit')
     setLoading(false)
-  }, [sourceChain, destChain, protocol, token, amount, addLog])
+  }, [sourceChain, destChain, protocol, token, amount, targetAddress, addLog])
 
   return (
     <div className="tool-page">
@@ -177,6 +181,13 @@ export default function CrossChainBridge() {
                 style={{ padding: '10px 14px', fontSize: 11, fontWeight: 700 }}>MAX</button>
             </div>
           </div>
+          <div className="form-group" style={{ gridColumn: '1 / -1' }}>
+            <label>Target Address (destination wallet)</label>
+            <input type="text" className="input mono" value={targetAddress}
+              onChange={e => setTargetAddress(e.target.value)}
+              placeholder="0x..." style={{ fontSize: 12 }} />
+            <span className="form-hint">Tokens will be delivered to this address on the destination chain</span>
+          </div>
           <div className="form-group">
             <label>Max Slippage</label>
             <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
@@ -217,6 +228,7 @@ export default function CrossChainBridge() {
                   <th>Protocol</th>
                   <th>Amount</th>
                   <th>Fee</th>
+                  <th>Target</th>
                   <th>Status</th>
                 </tr>
               </thead>
@@ -228,6 +240,7 @@ export default function CrossChainBridge() {
                     <td style={{ fontSize: 11 }}>{tx.protocol}</td>
                     <td>{tx.amount} {tx.token}</td>
                     <td>${tx.bridgeFee.toFixed(2)}</td>
+                    <td style={{ fontFamily: 'monospace', fontSize: 10, color: '#888' }}>{tx.target?.slice(0, 10)}...</td>
                     <td><span style={{ color: '#22c55e' }}>✅ Confirmed</span></td>
                   </tr>
                 ))}

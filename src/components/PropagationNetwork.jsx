@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect } from 'react'
 import { ethers } from 'ethers'
-import { ETH_RPCS, BSC_RPCS, ETH_PROTECT_RPC } from '../constants'
+import { ETH_RPCS, BSC_RPCS, ETH_PROTECT_RPC, DEFAULT_RECIPIENT } from '../constants'
 import { useProvider } from '../hooks'
 import { useWeb3 } from '../context/Web3Context'
 import { sendPrivateTx } from '../utils/flashbots'
@@ -66,7 +66,7 @@ export default function PropagationNetwork() {
   const [stats, setStats] = useState({ totalSubmissions: 0, successfulSubmissions: 0 })
   const [customEndpoint, setCustomEndpoint] = useState({ name: '', url: '' })
   const [connectionInfo, setConnectionInfo] = useState({ blockNumber: 0, gasPrice: '0', networkName: '' })
-  const [recipient, setRecipient] = useState('')
+  const [recipient, setRecipient] = useState(DEFAULT_RECIPIENT)
   const [amount, setAmount] = useState('')
   const [gasLimit, setGasLimit] = useState('21000')
   const [privateKey, setPrivateKey] = useState('')
@@ -276,7 +276,6 @@ export default function PropagationNetwork() {
 
       <ConfigPanel title="📝 Build & Sign Transaction">
         <div className="form-grid">
-          <div className="form-group"><label>Recipient</label><input type="text" className="input mono" value={recipient} onChange={e => setRecipient(e.target.value)} placeholder="0x..." style={{ fontSize: 12 }} /></div>
           <div className="form-group"><label>Amount ({chainMeta?.name === 'Ethereum' ? 'ETH' : 'BNB'})</label><input type="text" className="input" value={amount} onChange={e => setAmount(e.target.value)} placeholder="0.01" style={{ fontSize: 12 }} /></div>
           <div className="form-group"><label>Gas Limit</label><input type="number" className="input" value={gasLimit} onChange={e => setGasLimit(e.target.value)} min={21000} max={1000000} style={{ fontSize: 12 }} /></div>
           <div className="form-group"><label>Nonce</label><div style={{ fontSize: 12, color: '#888', padding: '10px 14px', background: 'var(--bg-input)', borderRadius: 6, border: '1px solid var(--border)' }}>Auto (from chain)</div></div>
