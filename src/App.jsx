@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import Dashboard from './components/Dashboard'
 import SendBSC from './components/SendBSC'
 import SendETH from './components/SendETH'
@@ -23,40 +23,102 @@ import P2PNetwork from './components/P2PNetwork'
 import RelayNodes from './components/RelayNodes'
 import PricePredictor from './components/PricePredictor'
 import { Web3Provider } from './context/Web3Context'
+import { SubscriptionProvider, useSubscription } from './context/SubscriptionContext'
+import AuthModal from './components/AuthModal'
+import SubscriptionPlans from './components/SubscriptionPlans'
+import AdminPanel from './components/AdminPanel'
 
-const TABS = [
-  { id: 'dashboard',       label: 'Dashboard',       icon: '◈' },
-  { id: 'arbitrage',       label: 'Arbitrage',       icon: '📊' },
-  { id: 'mev-bot',         label: 'MEV Bot',         icon: '🤖' },
-  { id: 'balances',        label: 'Balances',        icon: '💰' },
-  { id: 'send-bsc',        label: 'Send BSC',        icon: '⛓' },
-  { id: 'send-eth',        label: 'Send ETH FB',     icon: '🛡' },
-  { id: 'send-polygon',    label: 'Send Polygon',    icon: '🔶' },
-  { id: 'send-arbitrum',   label: 'Send Arbitrum',   icon: '🌀' },
-  { id: 'token-info',      label: 'Token Info',      icon: '◎' },
-  { id: 'auto-bot',        label: 'Auto-Bot',        icon: '⚡' },
-  { id: 'mempool',         label: 'Mempool Watch',   icon: '👁' },
-  { id: 'history',         label: 'History',        icon: '📜' },
-  { id: 'withdraw',        label: 'Withdraw',       icon: '💸' },
-  { id: 'telegram',        label: 'Telegram',        icon: '📱' },
-  { id: 'flashbots-bundle',label: 'Gasless Bundle',  icon: '⚡' },
-  { id: 'flash-send',      label: 'Flash Send',      icon: '⚙' },
-  { id: 'gasless-relay',   label: 'Gasless Relay',   icon: '⛽' },
-  { id: 'propagation',     label: 'Propagation',     icon: '📡' },
-  { id: 'cross-chain',     label: 'Cross-Chain',     icon: '🌉' },
-  { id: 'p2p-network',     label: 'P2P Network',     icon: '🌐' },
-  { id: 'relay-nodes',     label: 'Relay Nodes',     icon: '🗼' },
-  { id: 'predictor',       label: 'AI Predictor',    icon: '🧠' },
+// ─── Navigation structure with categories ──────────────────────────────
+
+const NAV_CATEGORIES = [
+  {
+    id: 'main',
+    label: 'Main',
+    tabs: [
+      { id: 'dashboard', label: 'Dashboard', icon: '◈', desc: 'Overview & quick actions', badge: null },
+    ],
+  },
+  {
+    id: 'trading',
+    label: 'Trading & Arbitrage',
+    icon: '📈',
+    tabs: [
+      { id: 'arbitrage', label: 'Arbitrage', icon: '📊', desc: 'DEX price monitoring & cross-DEX arbitrage', badge: 'HOT' },
+      { id: 'mev-bot', label: 'MEV Bot', icon: '🤖', desc: 'Flashbots bundles & private mempool protection', badge: null },
+      { id: 'auto-bot', label: 'Auto-Bot', icon: '⚡', desc: 'Automated transfer sweeper', badge: null },
+      { id: 'predictor', label: 'AI Predictor', icon: '🧠', desc: 'Price predictions with machine learning', badge: 'BETA' },
+    ],
+  },
+  {
+    id: 'transfers',
+    label: 'Transfers',
+    icon: '💸',
+    tabs: [
+      { id: 'send-bsc', label: 'Send BSC', icon: '⛓', desc: 'BEP-20 tokens on BNB Chain', badge: null },
+      { id: 'send-eth', label: 'Send ETH FB', icon: '🛡', desc: 'ERC-20 via Flashbots Protect', badge: 'PRIVATE' },
+      { id: 'send-polygon', label: 'Send Polygon', icon: '🔶', desc: 'Polygon MATIC & tokens', badge: null },
+      { id: 'send-arbitrum', label: 'Send Arbitrum', icon: '🌀', desc: 'Arbitrum ETH & tokens', badge: null },
+      { id: 'flash-send', label: 'Flash Send', icon: '⚙', desc: 'Low-level raw transactions', badge: 'ADV' },
+      { id: 'flashbots-bundle', label: 'Gasless Bundle', icon: '⚡', desc: 'Flashbots bundle transactions', badge: null },
+    ],
+  },
+  {
+    id: 'network',
+    label: 'Network',
+    icon: '🌐',
+    tabs: [
+      { id: 'propagation', label: 'Propagation', icon: '📡', desc: 'Multi-endpoint tx propagation', badge: null },
+      { id: 'cross-chain', label: 'Cross-Chain', icon: '🌉', desc: 'Bridge assets across networks', badge: 'NEW' },
+      { id: 'p2p-network', label: 'P2P Network', icon: '🌐', desc: 'Peer-to-peer tx relay network', badge: null },
+      { id: 'relay-nodes', label: 'Relay Nodes', icon: '🗼', desc: 'Manage relay node connections', badge: null },
+      { id: 'gasless-relay', label: 'Gasless Relay', icon: '⛽', desc: 'Meta-transactions & gas sponsorship', badge: null },
+    ],
+  },
+  {
+    id: 'wallet',
+    label: 'Wallet',
+    icon: '👛',
+    tabs: [
+      { id: 'balances', label: 'Balances', icon: '💰', desc: 'Multi-chain balance checker', badge: null },
+      { id: 'token-info', label: 'Token Info', icon: '◎', desc: 'Token details & metadata', badge: null },
+      { id: 'withdraw', label: 'Withdraw', icon: '💸', desc: 'Profit withdrawal from contracts', badge: null },
+      { id: 'telegram', label: 'Telegram', icon: '📱', desc: 'Telegram bot notifications', badge: null },
+    ],
+  },      { id: 'monitor',
+    label: 'Monitor',
+    icon: '👁',
+    tabs: [
+      { id: 'mempool', label: 'Mempool Watch', icon: '👁', desc: 'Live pending tx monitor', badge: null },
+      { id: 'history', label: 'History', icon: '📜', desc: 'Transaction history log', badge: null },
+    ],
+  },
+  {
+    id: 'admin',
+    label: 'Admin',
+    icon: '⚙',
+    tabs: [
+      { id: 'subscription', label: 'Subscription', icon: '💳', desc: 'Plans & license key activation', badge: null },
+      { id: 'admin-panel', label: 'Admin Panel', icon: '🛡️', desc: 'User & subscription management', badge: 'ADMIN' },
+    ],
+  },
 ]
+
+// Badge → CSS class map
+const BADGE_CLASSES = {
+  NEW: 'badge-new',
+  HOT: 'badge-hot',
+  BETA: 'badge-beta',
+  ADV: 'badge-adv',
+  PRIVATE: 'badge-private',
+  ADMIN: 'badge-admin',
+}
 
 const THEME_STORAGE_KEY = 'tokentoolkit_theme'
 
 function useTheme() {
   const [theme, setThemeState] = useState(() => {
-    // 1. Check localStorage
     const stored = localStorage.getItem(THEME_STORAGE_KEY)
     if (stored === 'light' || stored === 'dark') return stored
-    // 2. Fall back to system preference
     if (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) return 'light'
     return 'dark'
   })
@@ -74,7 +136,6 @@ function useTheme() {
     })
   }, [])
 
-  // Sync body class
   useEffect(() => {
     const body = document.body
     if (theme === 'light') {
@@ -84,7 +145,6 @@ function useTheme() {
     }
   }, [theme])
 
-  // Listen for system preference changes (only when no stored preference)
   useEffect(() => {
     if (!window.matchMedia) return
     const mq = window.matchMedia('(prefers-color-scheme: light)')
@@ -98,7 +158,6 @@ function useTheme() {
     return () => mq.removeEventListener('change', handler)
   }, [setTheme])
 
-  // Remove 'preload' class after first paint so CSS transitions kick in
   useEffect(() => {
     const body = document.body
     body.classList.add('preload')
@@ -111,38 +170,62 @@ function useTheme() {
   return { theme, setTheme, toggleTheme, isDark: theme === 'dark' }
 }
 
+const TAB_RENDER_MAP = {
+  dashboard:        (p) => <Dashboard onNavigate={p.setActiveTab} />,
+  arbitrage:        () => <ArbitrageDashboard />,
+  'mev-bot':        () => <MevBot />,
+  balances:         () => <BalanceChecker />,
+  'send-bsc':       () => <SendBSC />,
+  'send-eth':       () => <SendETH />,
+  'send-polygon':   () => <SendPolygon />,
+  'send-arbitrum':  () => <SendArbitrum />,
+  'token-info':     () => <TokenInfo />,
+  'auto-bot':       () => <AutoBot />,
+  mempool:          () => <MempoolWatcher />,
+  history:          () => <TransactionHistory />,
+  withdraw:         () => <ProfitWithdraw />,
+  telegram:         () => <TelegramSettings />,
+  'flashbots-bundle': () => <SendFlashbotsBundle />,
+  'flash-send':     () => <FlashSend />,
+  'gasless-relay':  () => <GaslessRelay />,
+  propagation:      () => <PropagationNetwork />,
+  'cross-chain':    () => <CrossChainBridge />,
+  'p2p-network':    () => <P2PNetwork />,
+  'relay-nodes':    () => <RelayNodes />,
+  predictor:        () => <PricePredictor />,
+  subscription:     () => <SubscriptionPlans />,
+  'admin-panel':    () => <AdminPanel />,
+}
+
 function AppContent() {
   const [activeTab, setActiveTab] = useState('dashboard')
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+  const [navSearch, setNavSearch] = useState('')
+  const [showAuthModal, setShowAuthModal] = useState(false)
   const { theme, toggleTheme } = useTheme()
+  const { user, isLoggedIn, isAdmin, userTier, logout } = useSubscription()
   const isDark = theme === 'dark'
 
-  const renderTab = () => {
-    switch (activeTab) {
-      case 'dashboard':   return <Dashboard onNavigate={setActiveTab} />
-      case 'arbitrage':   return <ArbitrageDashboard />
-      case 'mev-bot':     return <MevBot />
-      case 'balances':    return <BalanceChecker />
-      case 'send-bsc':    return <SendBSC />
-      case 'send-eth':    return <SendETH />
-      case 'send-polygon':    return <SendPolygon />
-      case 'send-arbitrum':   return <SendArbitrum />
-      case 'token-info':  return <TokenInfo />
-      case 'auto-bot':    return <AutoBot />
-      case 'mempool':     return <MempoolWatcher />
-      case 'history':     return <TransactionHistory />
-      case 'withdraw':    return <ProfitWithdraw />
-      case 'telegram':    return <TelegramSettings />
-      case 'flashbots-bundle': return <SendFlashbotsBundle />
-      case 'flash-send':  return <FlashSend />
-      case 'gasless-relay':   return <GaslessRelay />
-      case 'propagation':     return <PropagationNetwork />
-      case 'cross-chain':     return <CrossChainBridge />
-      case 'p2p-network':     return <P2PNetwork />
-      case 'relay-nodes':     return <RelayNodes />
-      case 'predictor':       return <PricePredictor />
-      default:            return <Dashboard onNavigate={setActiveTab} />
-    }
+  // Compute which categories/tabs to show based on search
+  const filteredNav = useMemo(() => {
+    if (!navSearch.trim()) return NAV_CATEGORIES
+
+    const q = navSearch.toLowerCase().trim()
+    return NAV_CATEGORIES
+      .map(cat => ({
+        ...cat,
+        tabs: cat.tabs.filter(t =>
+          t.label.toLowerCase().includes(q) ||
+          t.id.toLowerCase().includes(q) ||
+          (t.desc && t.desc.toLowerCase().includes(q))
+        ),
+      }))
+      .filter(cat => cat.tabs.length > 0)
+  }, [navSearch])
+
+  const renderTab = (tabId) => {
+    const renderFn = TAB_RENDER_MAP[tabId]
+    return renderFn ? renderFn({ setActiveTab }) : <Dashboard onNavigate={setActiveTab} />
   }
 
   return (
@@ -172,6 +255,18 @@ function AppContent() {
                 {isDark ? 'Light' : 'Dark'}
               </span>
             </button>
+            {/* Auth / Subscription indicator */}
+            {isLoggedIn ? (
+              <div className="header-auth-badge">
+                <span className={`ha-tier-dot tier-${userTier}`} />
+                <span className="ha-email">{user?.email?.split('@')[0]}</span>
+                {isAdmin && <span className="ha-admin-badge">ADMIN</span>}
+              </div>
+            ) : (
+              <button className="header-auth-btn" onClick={() => setShowAuthModal(true)}>
+                🔐 Sign In
+              </button>
+            )}
             <WalletConnectButton />
           </div>
           <button
@@ -186,24 +281,66 @@ function AppContent() {
             </span>
           </button>
         </div>
-      </header>
+      </header>      <div className="app-layout">
+        <nav className={`nav-tabs ${mobileMenuOpen ? 'mobile-open' : ''}`}>
+          {/* Search input */}
+          <div className="nav-search-wrapper">
+            <span className="nav-search-icon">🔍</span>
+            <input
+              type="text"
+              className="nav-search-input"
+              placeholder="Search features..."
+              value={navSearch}
+              onChange={e => setNavSearch(e.target.value)}
+            />
+            {navSearch && (
+              <button className="nav-search-clear" onClick={() => setNavSearch('')}>
+                ✕
+              </button>
+            )}
+          </div>
 
-      <nav className={`nav-tabs ${mobileMenuOpen ? 'mobile-open' : ''}`}>
-        {TABS.map(tab => (
-          <button
-            key={tab.id}
-            className={`nav-tab ${activeTab === tab.id ? 'active' : ''}`}
-            onClick={() => { setActiveTab(tab.id); setMobileMenuOpen(false) }}
-          >
-            <span className="tab-icon">{tab.icon}</span>
-            <span className="tab-label">{tab.label}</span>
-          </button>
-        ))}
-      </nav>
+          {/* Category groups */}
+          {filteredNav.map(cat => (
+            <div key={cat.id} className="nav-category">
+              <div className="nav-category-header">
+                <span className="nav-category-icon">{cat.icon}</span>
+                <span className="nav-category-label">{cat.label}</span>
+                <span className="nav-category-count">{cat.tabs.length}</span>
+              </div>
+              {cat.tabs.map(tab => {
+                const badgeClass = BADGE_CLASSES[tab.badge] || ''
+                return (
+                  <button
+                    key={tab.id}
+                    className={`nav-tab ${activeTab === tab.id ? 'active' : ''}`}
+                    onClick={() => { setActiveTab(tab.id); setMobileMenuOpen(false); setNavSearch('') }}
+                    title={tab.desc}
+                  >
+                    <span className="tab-icon">{tab.icon}</span>
+                    <span className="tab-content">
+                      <span className="tab-label">{tab.label}</span>
+                      <span className="tab-desc">{tab.desc}</span>
+                    </span>
+                    {tab.badge && (
+                      <span className={`tab-badge ${badgeClass}`}>
+                        {tab.badge}
+                      </span>
+                    )}
+                  </button>
+                )
+              })}
+            </div>
+          ))}
+        </nav>
 
-      <main className="main-content">
-        {renderTab()}
-      </main>
+        <main className="main-content">
+          {renderTab(activeTab)}
+        </main>
+      </div>
+
+      {/* Auth Modal */}
+      {showAuthModal && <AuthModal onClose={() => setShowAuthModal(false)} />}
 
       <footer className="app-footer">
         <span>Multi-Chain Token Toolkit v1.0</span>
@@ -219,7 +356,9 @@ function AppContent() {
 export default function App() {
   return (
     <Web3Provider>
-      <AppContent />
+      <SubscriptionProvider>
+        <AppContent />
+      </SubscriptionProvider>
     </Web3Provider>
   )
 }

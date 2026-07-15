@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react'
+import React, { useState, useCallback, useMemo } from 'react'
 import { DEFAULT_RECIPIENT } from '../constants'
 import { ethers } from 'ethers'
 
@@ -24,19 +24,28 @@ export default function RelayNodes() {
   const [withdrawTarget, setWithdrawTarget] = useState(DEFAULT_RECIPIENT)
   const [withdrawing, setWithdrawing] = useState(false)
 
+  // Computed values (will be used in JSX rendering)
+  const activeCount = useMemo(() => nodes.filter(n => n.status === 'active').length, [nodes])
+  const totalTx = useMemo(() => nodes.reduce((s, n) => s + n.txCount, 0), [nodes])
+  const totalSuccess = useMemo(() => nodes.reduce((s, n) => s + n.successCount, 0), [nodes])
+  const totalBalance = useMemo(() => nodes.reduce((s, n) => s + n.balanceEth, 0), [nodes])
+
   const addLog = useCallback((msg, type = 'info') => {
-    setLogs(prev => [{ time: new Date().toLocaleTimeString(), msg, type }, ...prev].slice(0, 100))
+    try {
+      const timeStr = new Date().toLocaleTimeString()
+      setLogs(prev => [{ time: timeStr, msg: String(msg), type }, ...prev].slice(0, 100))
+    } catch { /* silent fail */ }
   }, [])
 
   const addNode = useCallback(() => {
-    if (!newNodeName) return
+    if (!newNodeName.trim()) return
     const newPort = newNodeType === 'master' ? 8545 : 8545 + Math.floor(Math.random() * 10)
     const node = {
       id: Date.now(),
-      name: newNodeName,
+      name: newNodeName.trim(),
       type: newNodeType,
       region: newNodeRegion,
-      ip: `${Math.floor(Math.random() * 223) + 1}.${Math.floor(Math.random() * 255)}.${Math.floor(Math.random() * 255)}.${Math.floor(Math.random() * 255)}`,
+      ip: [Math.floor(Math.random() * 223) + 1, Math.floor(Math.random() * 255), Math.floor(Math.random() * 255), Math.floor(Math.random() * 255)].join('.'),
       port: newPort,
       status: 'active',
       txCount: 0,
@@ -46,7 +55,7 @@ export default function RelayNodes() {
       uptime: '100%',
     }
     setNodes(prev => [...prev, node])
-    addLog(`✅ ${newNodeType === 'master' ? '👑' : '🔹'} ${node.name} (${newNodeRegion}) registered`, 'success')
+    addLog('(+) ' + (newNodeType === 'master' ? '[MASTER]' : '[SLAVE]') + ' ' + node.name + ' (' + newNodeRegion + ') registered', 'success')
     if (newNodeType === 'master') {
       setNodes(prev => prev.map(n => n.type === 'master' && n.id !== node.id ? { ...n, type: 'slave' } : n))
     }
@@ -56,47 +65,13 @@ export default function RelayNodes() {
   const removeNode = useCallback((id) => {
     const node = nodes.find(n => n.id === id)
     setNodes(prev => prev.filter(n => n.id !== id))
-    addLog(`✕ Removed ${node?.name || 'node'}`, 'warning')
+    if (node) addLog('(x) Removed ' + node.name, 'warning')
     if (node?.type === 'master') {
-      addLog('👑 Promoting first slave to master...', 'info')
-      setNodes(prev => {
-        const slave = prev.find(n => n.type === 'slave' && n.status === 'active')
-        if (slave) return prev.map(n => n.id === slave.id ? { ...n, type: 'master' } : n)
-        return prev
-      })
-    }
-  }, [nodes, addLog])
-
-  const toggleNodeStatus = useCallback((id) => {
-    setNodes(prev => prev.map(n =>
-      n.id === id ? { ...n, status: n.status === 'active' ? 'offline' : 'active', latencyMs: n.status === 'offline' ? Math.floor(Math.random() * 80) : 0 } : n
-    ))
-    const node = nodes.find(n => n.id === id)
-    if (node) addLog(`🔄 ${node.name} ${node.status === 'active' ? 'offline' : 'active'}`, 'info')
-  }, [nodes, addLog])
-
-  const runHealthCheck = useCallback(() => {
-    addLog('🔍 Running comprehensive health check...', 'info')
-    setNodes(prev => prev.map(n => {
-      const health = Math.random()
-      return {
-        ...n,
-        status: health > 0.15 ? 'active' : health > 0.05 ? 'degraded' : 'offline',
-        latencyMs: Math.floor(Math.random() * 200),
-        uptime: health > 0.15 ? '99.9%' : health > 0.05 ? '97.2%' : '0%',
-      }
-    }))
-    const active = nodes.filter(n => n.status === 'active').length
-    addLog(`✅ Health check complete: ${nodes.length} nodes checked`, 'success')
-
-    // Auto-failover
-    const masterOffline = nodes.find(n => n.type === 'master' && n.status === 'offline')
-    if (masterOffline) {
-      addLog('👑 Master offline — initiating failover...', 'warning')
+      addLog('(i) Promoting first slave to master...', 'info')
       setNodes(prev => {
         const slave = prev.find(n => n.type === 'slave' && n.status === 'active')
         if (slave) {
-          addLog(`👑 Promoting ${slave.name} to master`, 'success')
+          addLog('(=) Promoting ' + slave.name + ' to master', 'success')
           return prev.map(n => n.id === slave.id ? { ...n, type: 'master' } : n)
         }
         return prev
@@ -104,45 +79,89 @@ export default function RelayNodes() {
     }
   }, [nodes, addLog])
 
+  const toggleNodeStatus = useCallback((id) => {
+    let foundNode = null
+    setNodes(prev => {
+      const target = prev.find(n => n.id === id)
+      if (target) foundNode = target
+      return prev.map(n =>
+        n.id === id ? { ...n, status: n.status === 'active' ? 'offline' : 'active', latencyMs: n.status !== 'active' ? Math.floor(Math.random() * 80) : 0 } : n
+      )
+    })
+    if (foundNode) {
+      const newStatus = foundNode.status === 'active' ? 'offline' : 'active'
+      addLog('(!) ' + foundNode.name + ' -> ' + newStatus, 'info')
+    }
+  }, [addLog])
+
+  const runHealthCheck = useCallback(() => {
+    addLog('(...) Running comprehensive health check...', 'info')
+    setNodes(prev => {
+      const checked = prev.map(n => {
+        const health = Math.random()
+        return {
+          ...n,
+          status: health > 0.15 ? 'active' : health > 0.05 ? 'degraded' : 'offline',
+          latencyMs: Math.floor(Math.random() * 200),
+          uptime: health > 0.15 ? '99.9%' : health > 0.05 ? '97.2%' : '0%',
+        }
+      })
+      // Auto-failover: check if master went offline
+      const masterOffline = checked.find(n => n.type === 'master' && n.status === 'offline')
+      if (masterOffline) {
+        addLog('(!) Master offline - initiating failover...', 'warning')
+        const slave = checked.find(n => n.type === 'slave' && n.status === 'active')
+        if (slave) {
+          addLog('(=) Promoting ' + slave.name + ' to master', 'success')
+          return checked.map(n => n.id === slave.id ? { ...n, type: 'master' } : n)
+        }
+      }
+      return checked
+    })
+    addLog('(ok) Health check complete: ' + nodes.length + ' nodes checked', 'success')
+  }, [nodes.length, addLog])
+
   const syncBalances = useCallback(() => {
-    addLog('💰 Syncing relay node balances...', 'info')
+    addLog('($) Syncing relay node balances...', 'info')
     setNodes(prev => prev.map(n => ({
       ...n,
       balanceEth: parseFloat((Math.random() * 3 + 0.1).toFixed(4)),
     })))
-    addLog('✅ Balances synced', 'success')
+    addLog('(ok) Balances synced', 'success')
   }, [addLog])
 
   const handleWithdraw = useCallback(async () => {
     if (!ethers.isAddress(withdrawTarget)) {
-      addLog('❌ Invalid target address', 'error'); return
-    }
-    if (totalBalance <= 0) {
-      addLog('❌ No balance to withdraw', 'error'); return
+      addLog('(x) Invalid target address', 'error'); return
     }
 
     setWithdrawing(true)
-    addLog(`💸 Withdrawing ${totalBalance.toFixed(4)} ETH from ${nodes.length} nodes → ${withdrawTarget.slice(0, 10)}...`, 'info')
+    // Read current nodes and balance inside the callback to avoid stale closures
+    const currentNodes = nodes
+    const currentBalance = currentNodes.reduce((s, n) => s + n.balanceEth, 0)
 
-    for (const node of nodes.filter(n => n.balanceEth > 0)) {
+    if (currentBalance <= 0) {
+      addLog('(x) No balance to withdraw', 'error')
+      setWithdrawing(false)
+      return
+    }
+
+    addLog('($) Withdrawing ' + currentBalance.toFixed(4) + ' ETH from ' + currentNodes.length + ' nodes', 'info')
+
+    for (const node of currentNodes.filter(n => n.balanceEth > 0)) {
       await new Promise(r => setTimeout(r, 300 + Math.random() * 500))
       const success = Math.random() > 0.05
       if (success) {
-        addLog(`  ✅ ${node.name}: ${node.balanceEth.toFixed(4)} ETH withdrawn → ${withdrawTarget.slice(0, 10)}...`, 'success')
+        addLog('  (ok) ' + node.name + ': ' + node.balanceEth.toFixed(4) + ' ETH withdrawn', 'success')
       } else {
-        addLog(`  ❌ ${node.name}: withdraw failed (RPC timeout)`, 'error')
+        addLog('  (x) ' + node.name + ': withdraw failed (RPC timeout)', 'error')
       }
     }
 
     setNodes(prev => prev.map(n => ({ ...n, balanceEth: 0 })))
-    addLog(`🎉 Withdraw complete! ${totalBalance.toFixed(4)} ETH → ${withdrawTarget.slice(0, 10)}...${withdrawTarget.slice(-6)}`, 'profit')
+    addLog('(done) Withdraw complete! ' + currentBalance.toFixed(4) + ' ETH sent', 'profit')
     setWithdrawing(false)
-  }, [withdrawTarget, nodes, totalBalance, addLog])
-
-  const activeCount = nodes.filter(n => n.status === 'active').length
-  const totalTx = nodes.reduce((s, n) => s + n.txCount, 0)
-  const totalSuccess = nodes.reduce((s, n) => s + n.successCount, 0)
-  const totalBalance = nodes.reduce((s, n) => s + n.balanceEth, 0)
+  }, [withdrawTarget, nodes, addLog])
 
   return (
     <div className="tool-page">

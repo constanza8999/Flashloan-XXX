@@ -1,18 +1,18 @@
 """
 FlashArbitrage Backend Server
 ==============================
-FastAPI server that provides withdraw, sweep, and balance-checking APIs
-for the FlashArbitrage smart contract.
+FastAPI server that provides withdraw, sweep, balance-checking, and
+subscription management APIs.
 
 This is a standalone server that reuses the arbitrage_engine package.
 
 Usage:
     # Install dependencies
-    pip install fastapi uvicorn web3 eth-account
+    pip install fastapi uvicorn web3 eth-account python-dotenv
 
-    # Set your private keys (optional, can be passed per-request)
-    export ETH_RELAYER_KEY="0x..."
-    export BSC_RELAYER_KEY="0x..."
+    # Copy and configure environment
+    cp .env.example .env
+    # Edit .env with your private keys and SMTP settings
 
     # Start the server
     python server.py
@@ -22,14 +22,28 @@ Usage:
 
 import os
 import sys
+import secrets
+import hashlib
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+
+# ─── Load .env file if python-dotenv is installed ─────────────────────
+try:
+    from dotenv import load_dotenv
+    env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env')
+    if os.path.exists(env_path):
+        load_dotenv(env_path)
+        print(f"[server] Loaded environment from {env_path}")
+    else:
+        print(f"[server] No .env file found at {env_path}. Using system env vars.")
+except ImportError:
+    print("[server] python-dotenv not installed. Install it: pip install python-dotenv")
 
 # ─── Ensure arbitrage_engine is importable ──────────────────────────────
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -549,24 +563,437 @@ async def sweep(req: SweepRequest):
         return JSONResponse({"error": f"Sweep failed: {str(e)}"}, status_code=500)
 
 
-# ─── Start Server ──────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════
+# SUBSCRIPTION & AUTH SYSTEM
+# ══════════════════════════════════════════════════════════════════════
+
+import smtplib
+import email.utils
+from email.message import EmailMessage
+
+# In-memory storage (replace with a real DB in production)
+_users = {}        # email -> { password_hash, name, tier, license_key, expires_at }
+_license_keys = {} # license_key -> { email, tier, created_at, expires_at, active }
+
+# Admin credentials
+ADMIN_EMAIL = "josejaimejulia7@gmail.com"
+ADMIN_PASSWORD = "constanza999"
+
+# PayPal email (where payments go)
+PAYPAL_EMAIL = "josejaimejulia7@gmail.com"
+
+def _hash_password(password: str) -> str:
+    """Simple hash for demo — use bcrypt in production."""
+    return hashlib.sha256(password.encode()).hexdigest()
+
+def _generate_license_key() -> str:
+    """Generate a license key: TK-XXXXX-XXXXX-XXXXX-XXXXX"""
+    chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+    segments = []
+    for _ in range(4):
+        seg = "".join(secrets.choice(chars) for _ in range(5))
+        segments.append(seg)
+    return f"TK-{'-'.join(segments)}"
+
+def _send_email(to_email: str, subject: str, body: str):
+    """Send email via SMTP. Configure env vars in production."""
+    smtp_server = os.environ.get("SMTP_SERVER", "")
+    smtp_port = int(os.environ.get("SMTP_PORT", "587"))
+    smtp_user = os.environ.get("SMTP_USER", "")
+    smtp_pass = os.environ.get("SMTP_PASS", "")
+
+    if not smtp_server or not smtp_user:
+        log.info(f"Email not sent (SMTP not configured): {subject} -> {to_email}")
+        log.info(f"Body preview: {body[:100]}...")
+        return False
+
+    try:
+        msg = EmailMessage()
+        msg.set_content(body)
+        msg["Subject"] = subject
+        msg["From"] = smtp_user
+        msg["To"] = to_email
+        msg["Date"] = email.utils.formatdate()
+
+        with smtplib.SMTP(smtp_server, smtp_port) as server:
+            server.starttls()
+            server.login(smtp_user, smtp_pass)
+            server.send_message(msg)
+        log.info(f"Email sent: {subject} -> {to_email}")
+        return True
+    except Exception as e:
+        log.warning(f"Failed to send email: {e}")
+        return False
+
+
+# ─── Request models ────────────────────────────────────────────────────
+
+class AuthRegisterRequest(BaseModel):
+    email: str
+    password: str
+    name: Optional[str] = None
+
+
+class AuthLoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class ActivateRequest(BaseModel):
+    license_key: str
+    email: Optional[str] = None
+
+
+class PurchaseRequest(BaseModel):
+    plan: str  # pro | enterprise
+    email: str
+    payment_method: str = "paypal"
+    license_key: Optional[str] = None
+
+
+class AdminUpdateTierRequest(BaseModel):
+    email: str
+    tier: str  # free | pro | enterprise
+
+
+# ─── Auth Endpoints ────────────────────────────────────────────────────
+
+@app.post("/api/auth/register")
+async def register(req: AuthRegisterRequest):
+    if not req.email or not req.password:
+        return JSONResponse({"error": "Email and password required"}, status_code=400)
+
+    if req.email in _users:
+        return JSONResponse({"error": "User already exists"}, status_code=409)
+
+    _users[req.email] = {
+        "password_hash": _hash_password(req.password),
+        "name": req.name or req.email.split("@")[0],
+        "tier": "free",
+        "license_key": None,
+        "expires_at": None,
+        "created_at": datetime.now().isoformat(),
+    }
+    log.info(f"User registered: {req.email}")
+
+    return {
+        "success": True,
+        "email": req.email,
+        "name": _users[req.email]["name"],
+        "tier": "free",
+    }
+
+
+@app.post("/api/auth/login")
+async def login(req: AuthLoginRequest):
+    if not req.email or not req.password:
+        return JSONResponse({"error": "Email and password required"}, status_code=400)
+
+    # Admin login
+    if req.email.lower() == ADMIN_EMAIL.lower():
+        if req.password == ADMIN_PASSWORD:
+            log.info(f"Admin login: {req.email}")
+            return {
+                "success": True,
+                "email": ADMIN_EMAIL,
+                "name": "Admin",
+                "tier": "enterprise",
+                "is_admin": True,
+                "license_key": "ADMIN-MASTER-KEY",
+                "expires_at": None,
+            }
+        else:
+            return JSONResponse({"error": "Invalid admin credentials"}, status_code=401)
+
+    # Regular user login
+    user = _users.get(req.email)
+    if not user:
+        return JSONResponse({"error": "User not found"}, status_code=404)
+
+    if user["password_hash"] != _hash_password(req.password):
+        return JSONResponse({"error": "Invalid password"}, status_code=401)
+
+    log.info(f"User login: {req.email}")
+    return {
+        "success": True,
+        "email": req.email,
+        "name": user["name"],
+        "tier": user["tier"],
+        "license_key": user["license_key"] or "",
+        "expires_at": user["expires_at"],
+    }
+
+
+@app.post("/api/auth/activate")
+async def activate_license(req: ActivateRequest):
+    if not req.license_key:
+        return JSONResponse({"error": "License key required"}, status_code=400)
+
+    lk = _license_keys.get(req.license_key)
+    if not lk:
+        return JSONResponse({"error": "Invalid license key"}, status_code=404)
+
+    if not lk["active"]:
+        return JSONResponse({"error": "License key already used or revoked"}, status_code=400)
+
+    # Check expiration
+    if lk["expires_at"]:
+        expires = datetime.fromisoformat(lk["expires_at"])
+        if expires < datetime.now():
+            return JSONResponse({"error": "License key has expired"}, status_code=400)
+
+    # Mark as used
+    lk["active"] = False
+    lk["activated_at"] = datetime.now().isoformat()
+    lk["activated_by"] = req.email
+
+    # Update user
+    target_email = req.email or lk["email"]
+    if target_email in _users:
+        _users[target_email]["tier"] = lk["tier"]
+        _users[target_email]["license_key"] = req.license_key
+        _users[target_email]["expires_at"] = lk["expires_at"]
+
+    log.info(f"License activated: {req.license_key} for {target_email} ({lk['tier']})")
+
+    return {
+        "success": True,
+        "tier": lk["tier"],
+        "email": target_email,
+        "expires_at": lk["expires_at"],
+    }
+
+
+# ─── Subscription Endpoints ────────────────────────────────────────────
+
+@app.post("/api/subscriptions/purchase")
+async def purchase(req: PurchaseRequest):
+    """Process a subscription purchase and generate a license key."""
+    valid_plans = {
+        "pro": {"price": 29.99, "period_days": 30},
+        "enterprise": {"price": 99.99, "period_days": 30},
+    }
+
+    plan_info = valid_plans.get(req.plan)
+    if not plan_info:
+        return JSONResponse({"error": f"Invalid plan: {req.plan}"}, status_code=400)
+
+    if not req.email:
+        return JSONResponse({"error": "Email required"}, status_code=400)
+
+    # Generate license key
+    license_key = req.license_key or _generate_license_key()
+
+    # Calculate expiration
+    expires_at = (datetime.now() + timedelta(days=plan_info["period_days"])).isoformat()
+
+    # Store license key
+    _license_keys[license_key] = {
+        "email": req.email,
+        "tier": req.plan,
+        "price": plan_info["price"],
+        "created_at": datetime.now().isoformat(),
+        "expires_at": expires_at,
+        "active": True,
+    }
+
+    # Create/update user
+    if req.email not in _users:
+        _users[req.email] = {
+            "password_hash": None,
+            "name": req.email.split("@")[0],
+            "tier": req.plan,
+            "license_key": license_key,
+            "expires_at": expires_at,
+            "created_at": datetime.now().isoformat(),
+        }
+    else:
+        _users[req.email]["tier"] = req.plan
+        _users[req.email]["license_key"] = license_key
+        _users[req.email]["expires_at"] = expires_at
+
+    log.info(f"Purchase: {req.email} -> {req.plan} (key: {license_key[:18]}...)")
+
+    # Send license key via email
+    email_body = f"""Thank you for your purchase!
+
+Plan: {req.plan.upper()}
+License Key: {license_key}
+Expires: {expires_at[:10]}
+
+To activate, enter the license key in the Subscription page.
+
+Payments processed via PayPal: {PAYPAL_EMAIL}
+"""
+    _send_email(
+        req.email,
+        f"Your Token Toolkit {req.plan.upper()} License Key",
+        email_body,
+    )
+
+    return {
+        "success": True,
+        "license_key": license_key,
+        "tier": req.plan,
+        "expires_at": expires_at,
+        "email": req.email,
+    }
+
+
+@app.get("/api/subscriptions/plans")
+async def get_plans():
+    """Return available subscription plans."""
+    return {
+        "plans": [
+            {
+                "id": "free",
+                "name": "Free",
+                "price": 0,
+                "features": ["Send BSC/ETH", "Balance check", "Token info"],
+            },
+            {
+                "id": "pro",
+                "name": "Pro",
+                "price": 29.99,
+                "currency": "USD",
+                "period": "month",
+                "features": ["All chains", "Arbitrage", "MEV Bot", "Withdraw", "Telegram"],
+            },
+            {
+                "id": "enterprise",
+                "name": "Enterprise",
+                "price": 99.99,
+                "currency": "USD",
+                "period": "month",
+                "features": ["All Pro", "P2P Network", "Cross-Chain", "Relay Nodes", "AI Predictor"],
+            },
+        ],
+        "paypal_email": PAYPAL_EMAIL,
+    }
+
+
+# ─── Admin Endpoints ──────────────────────────────────────────────────
+
+@app.get("/api/admin/subscriptions")
+async def admin_list_subscriptions():
+    """List all users and their subscription status (admin only)."""
+    subs = []
+    for email, data in _users.items():
+        subs.append({
+            "email": email,
+            "name": data.get("name", ""),
+            "tier": data.get("tier", "free"),
+            "license_key": data.get("license_key", ""),
+            "expires_at": data.get("expires_at"),
+            "created_at": data.get("created_at"),
+        })
+    # Add admin
+    subs.append({
+        "email": ADMIN_EMAIL,
+        "name": "Admin",
+        "tier": "enterprise",
+        "license_key": "ADMIN-MASTER-KEY",
+        "expires_at": None,
+        "created_at": datetime.now().isoformat(),
+    })
+    return {"subscriptions": subs}
+
+
+@app.post("/api/admin/update-tier")
+async def admin_update_tier(req: AdminUpdateTierRequest):
+    """Update a user's subscription tier (admin only)."""
+    if not req.email or req.tier not in ("free", "pro", "enterprise"):
+        return JSONResponse({"error": "Invalid request"}, status_code=400)
+
+    if req.email in _users:
+        _users[req.email]["tier"] = req.tier
+        log.info(f"Admin updated {req.email} -> {req.tier}")
+        return {"success": True, "email": req.email, "tier": req.tier}
+    else:
+        return JSONResponse({"error": "User not found"}, status_code=404)
+
+
+@app.post("/api/admin/generate-license")
+async def admin_generate_license(req: PurchaseRequest):
+    """Admin generates a license key for a user."""
+    license_key = _generate_license_key()
+    from datetime import timedelta
+    expires_at = (datetime.now() + timedelta(days=30)).isoformat()
+
+    _license_keys[license_key] = {
+        "email": req.email,
+        "tier": req.plan,
+        "created_at": datetime.now().isoformat(),
+        "expires_at": expires_at,
+        "active": True,
+    }
+
+    log.info(f"Admin generated license {license_key[:18]}... for {req.email}")
+
+    # Send email
+    _send_email(
+        req.email,
+        f"Your Token Toolkit {req.plan.upper()} License Key",
+        f"""Your license key has been generated by the admin.
+
+Plan: {req.plan.upper()}
+License Key: {license_key}
+Expires: {expires_at[:10]}
+
+Activate it on the Subscription page.
+"""
+    )
+
+    return {
+        "success": True,
+        "license_key": license_key,
+        "tier": req.plan,
+        "email": req.email,
+        "expires_at": expires_at,
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Start Server
+# ══════════════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
     import uvicorn
     PORT = int(os.environ.get("PORT", 8000))
-    log.info("=" * 52)
+    log.info("=" * 60)
     log.info("  >> FlashArbitrage Backend Server <<")
-    log.info("=" * 52)
+    log.info("=" * 60)
     log.info(f"  Server URL    : http://localhost:{PORT}")
     log.info(f"  Health check  : http://localhost:{PORT}/health")
     log.info(f"  API docs      : http://localhost:{PORT}/docs")
-    log.info("=" * 52)
-    log.info("  Required env vars:")
-    log.info("    ETH_RELAYER_KEY       - Owner key for Ethereum FlashArbitrage")
-    log.info("    BSC_RELAYER_KEY       - Owner key for BSC FlashArbitrage")
-    log.info("    POLYGON_RELAYER_KEY   - Owner key for Polygon FlashArbitrage")
-    log.info("    ARBITRUM_RELAYER_KEY  - Owner key for Arbitrum FlashArbitrage")
-    log.info("=" * 52)
-    log.info("  No keys set? Set them or pass private_key in each request.")
-    log.info("=" * 52)
+    log.info("=" * 60)
+    log.info("  REQUIRED ENV VARS:")
+    log.info("    ETH_RELAYER_KEY       - Owner key for Ethereum")
+    log.info("    BSC_RELAYER_KEY       - Owner key for BSC")
+    log.info("    POLYGON_RELAYER_KEY   - Owner key for Polygon")
+    log.info("    ARBITRUM_RELAYER_KEY  - Owner key for Arbitrum")
+    log.info("=" * 60)
+    log.info("  OPTIONAL ENV VARS (for email delivery):")
+    log.info("    SMTP_SERVER           - SMTP host (e.g. smtp.gmail.com)")
+    log.info("    SMTP_PORT             - SMTP port (default 587)")
+    log.info("    SMTP_USER             - SMTP username")
+    log.info("    SMTP_PASS             - SMTP password")
+    log.info("=" * 60)
+    log.info(f"  PayPal Email  : {PAYPAL_EMAIL}")
+    log.info(f"  Admin Email   : {ADMIN_EMAIL}")
+    log.info("=" * 60)
+    log.info("  Users registered in memory. Restart to reset.")
+    log.info("  For production, add a database.")
+    log.info("=" * 60)
+    log.info("  .env file: Copy .env.example to .env and fill in your values.")
+    log.info("  The server will auto-load .env on startup (requires python-dotenv).")
+    log.info("=" * 60)
+
+    # Warn about missing relayer keys
+    missing = [cfg["env_key"] for cid, cfg in CHAIN_CONFIG.items() if not os.environ.get(cfg["env_key"])]
+    if missing:
+        log.warning("Missing keys: %s. Withdraw/sweep will fail for these chains.", ", ".join(missing))
+    else:
+        log.info("All relayer keys are configured.")
+
     uvicorn.run(app, host="0.0.0.0", port=PORT, log_level="info")
