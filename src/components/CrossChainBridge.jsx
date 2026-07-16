@@ -1,6 +1,8 @@
-import React, { useState, useCallback } from 'react'
+import React, { useState, useCallback, useEffect } from 'react'
 import { DEFAULT_RECIPIENT } from '../constants'
 import CopyButton from './shared/CopyButton'
+
+const BACKEND_URL = 'http://localhost:8000'
 
 const CHAINS = [
   { id: 'ethereum', name: 'Ethereum', native: 'ETH', icon: '🔵', chainId: 1 },
@@ -43,25 +45,60 @@ export default function CrossChainBridge() {
     ethereum: { USDT: 1.0, WETH: 2345.50 },
     bsc: { USDT: 1.0, WBNB: 587.30 },
   })
+  const [spreadBps, setSpreadBps] = useState(0)
+  const [opportunities, setOpportunities] = useState([])
+  const [backendOnline, setBackendOnline] = useState(null)
 
   const addLog = useCallback((msg, type = 'info') => {
     setLogs(prev => [{ time: new Date().toLocaleTimeString(), msg, type }, ...prev].slice(0, 100))
   }, [])
 
-  const refreshPrices = useCallback(() => {
-    addLog('🔄 Fetching cross-chain prices...', 'info')
-    const ethWeth = (Math.random() * 100 + 2300).toFixed(2)
-    const bscWbnb = (Math.random() * 20 + 580).toFixed(2)
-    setPrices({
-      ethereum: { USDT: 1.0, WETH: parseFloat(ethWeth) },
-      bsc: { USDT: 1.0, WBNB: parseFloat(bscWbnb) },
-    })
-    addLog(`📊 ETH USDT/WETH: $${ethWeth} | BSC USDT/WBNB: $${bscWbnb}`, 'info')
-
-    // Check for arbitrage
-    const spread = Math.abs((parseFloat(ethWeth) - parseFloat(bscWbnb)) / Math.min(parseFloat(ethWeth), parseFloat(bscWbnb)) * 10000)
-    addLog(`🔍 Cross-chain spread: ${spread.toFixed(1)} bps${spread > 20 ? ' 🚀 Profitable!' : ''}`, spread > 20 ? 'profit' : 'info')
+  const refreshPrices = useCallback(async () => {
+    addLog('🔄 Fetching cross-chain prices from backend...', 'info')
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/crosschain/prices`, { signal: AbortSignal.timeout(10000) })
+      const data = await res.json()
+      if (data.status === 'ok') {
+        setPrices({
+          ethereum: { USDT: 1.0, WETH: data.eth_price },
+          bsc: { USDT: 1.0, WBNB: data.bsc_price },
+        })
+        setSpreadBps(data.spread_bps)
+        addLog(`📊 ETH WETH: $${data.eth_price} | BSC WBNB: $${data.bsc_price} | Spread: ${data.spread_bps}bps${data.fallback ? ' [fallback]' : ''}`, 'info')
+        if (data.spread_bps > 20) addLog(`🚀 Profitable spread detected! ${data.spread_bps}bps`, 'profit')
+        setBackendOnline(true)
+      }
+    } catch (err) {
+      addLog(`⚠️ Backend offline — using local simulation`, 'warn')
+      const ethWeth = (Math.random() * 100 + 2300).toFixed(2)
+      const bscWbnb = (Math.random() * 20 + 580).toFixed(2)
+      setPrices({ ethereum: { USDT: 1.0, WETH: parseFloat(ethWeth) }, bsc: { USDT: 1.0, WBNB: parseFloat(bscWbnb) } })
+      setSpreadBps(Math.abs(parseFloat(ethWeth) - parseFloat(bscWbnb)) / Math.min(parseFloat(ethWeth), parseFloat(bscWbnb)) * 10000)
+      setBackendOnline(false)
+    }
   }, [addLog])
+
+  const scanOpportunities = useCallback(async () => {
+    addLog('🔍 Scanning for cross-chain arbitrage opportunities...', 'info')
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/crosschain/opportunities`, { signal: AbortSignal.timeout(10000) })
+      const data = await res.json()
+      if (data.status === 'ok') {
+        setOpportunities(data.opportunities || [])
+        if (data.opportunities?.length > 0) {
+          addLog(`🚀 Found ${data.opportunities.length} opportunities! Best: $${data.opportunities[0].net_profit_usdt} profit`, 'profit')
+        } else {
+          addLog('ℹ️ No profitable opportunities found right now', 'info')
+        }
+      }
+    } catch (err) {
+      addLog(`⚠️ Opportunity scan failed: ${err.message}`, 'warn')
+    }
+  }, [addLog])
+
+  useEffect(() => {
+    refreshPrices()
+  }, [refreshPrices])
 
   const handleBridge = useCallback(async () => {
     if (!amount || parseFloat(amount) <= 0) { addLog('❌ Invalid amount', 'error'); return }
@@ -69,49 +106,58 @@ export default function CrossChainBridge() {
     setLoading(true)
     const src = CHAINS.find(c => c.id === sourceChain)
     const dst = CHAINS.find(c => c.id === destChain)
-    const srcExplorer = CHAIN_EXPLORERS[sourceChain] || 'https://etherscan.io/tx/'
-    const dstExplorer = CHAIN_EXPLORERS[destChain] || 'https://etherscan.io/tx/'
     const proto = BRIDGE_PROTOCOLS.find(p => p.id === protocol)
 
     addLog(`🌉 Bridging ${amount} ${token} from ${src.name} → ${dst.name} via ${proto.name}`, 'info')
     addLog(`📍 Target address: ${targetAddress.slice(0, 10)}...${targetAddress.slice(-6)}`, 'info')
-    addLog(`🔧 Quoting bridge fee...`, 'info')
 
-    await new Promise(r => setTimeout(r, 1000))
+    // Try backend bridge endpoint
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/crosschain/bridge`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          source_chain: sourceChain, dest_chain: destChain,
+          protocol, amount: parseFloat(amount), target_address: targetAddress,
+          simulate: true,
+        }),
+        signal: AbortSignal.timeout(15000),
+      })
+      const data = await res.json()
+      if (data.status === 'ok') {
+        addLog(`💰 Bridge fee: $${data.bridge_fee_usdt}`, 'info')
+        addLog(`✅ Source tx: ${data.tx_hash_source.slice(0, 18)}...`, 'success')
+        addLog(`✅ Dest delivery: ${data.tx_hash_dest.slice(0, 18)}...`, 'profit')
+        const record = {
+          id: Date.now(), timestamp: new Date().toLocaleTimeString(),
+          source: src.name, dest: dst.name, protocol: proto.name, token,
+          amount: parseFloat(amount), bridgeFee: data.bridge_fee_usdt,
+          srcTxHash: data.tx_hash_source, dstTxHash: data.tx_hash_dest,
+          srcExplorer: data.explorer_source, dstExplorer: data.explorer_dest,
+          target: targetAddress, status: 'confirmed',
+        }
+        setBridgeHistory(prev => [record, ...prev].slice(0, 50))
+        addLog(`🎉 Bridge complete! ${amount} ${token} ${src.icon} → ${dst.icon}`, 'profit')
+        setLoading(false)
+        return
+      }
+    } catch (err) {
+      addLog(`⚠️ Backend offline — using local simulation`, 'warn')
+    }
+
+    // Fallback: local simulation
     const bridgeFee = (Math.random() * 5 + 0.5).toFixed(2)
     addLog(`💰 Bridge fee: $${bridgeFee}`, 'info')
-
-    addLog(`📤 Sending deposit transaction on ${src.name}...`, 'info')
-    await new Promise(r => setTimeout(r, 1500))
-
+    await new Promise(r => setTimeout(r, 1000))
     const srcTxHash = '0x' + Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join('')
-    addLog(`✅ Source tx confirmed: ${srcTxHash.slice(0, 18)}...`, 'success')
-
-    addLog(`👁 Monitoring ${dst.name} for delivery to ${targetAddress.slice(0, 10)}...`, 'info')
-    await new Promise(r => setTimeout(r, 2000))
-
     const dstTxHash = '0x' + Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join('')
-    addLog(`✅ Destination delivery confirmed: ${dstTxHash.slice(0, 18)}...`, 'profit')
-
-    const record = {
-      id: Date.now(),
-      timestamp: new Date().toLocaleTimeString(),
-      source: src.name,
-      dest: dst.name,
-      protocol: proto.name,
-      token,
-      amount: parseFloat(amount),
-      bridgeFee: parseFloat(bridgeFee),
-      srcTxHash,
-      dstTxHash,
-      srcExplorer: srcExplorer + srcTxHash,
-      dstExplorer: dstExplorer + dstTxHash,
-      target: targetAddress,
-      status: 'confirmed',
-    }
+    addLog(`✅ Source tx: ${srcTxHash.slice(0, 18)}...`, 'success')
+    addLog(`✅ Dest delivery: ${dstTxHash.slice(0, 18)}...`, 'profit')
+    const srcExplorer = CHAIN_EXPLORERS[sourceChain] || 'https://etherscan.io/tx/'
+    const dstExplorer = CHAIN_EXPLORERS[destChain] || 'https://etherscan.io/tx/'
+    const record = { id: Date.now(), timestamp: new Date().toLocaleTimeString(), source: src.name, dest: dst.name, protocol: proto.name, token, amount: parseFloat(amount), bridgeFee: parseFloat(bridgeFee), srcTxHash, dstTxHash, srcExplorer: srcExplorer + srcTxHash, dstExplorer: dstExplorer + dstTxHash, target: targetAddress, status: 'confirmed' }
     setBridgeHistory(prev => [record, ...prev].slice(0, 50))
-
-    addLog(`🎉 Bridge complete! ${amount} ${token} ${src.icon} → ${dst.icon} (→ ${targetAddress.slice(0, 10)}...)`, 'profit')
+    addLog(`🎉 Bridge complete! ${amount} ${token} ${src.icon} → ${dst.icon}`, 'profit')
     setLoading(false)
   }, [sourceChain, destChain, protocol, token, amount, targetAddress, addLog])
 
@@ -141,17 +187,45 @@ export default function CrossChainBridge() {
         </div>
         <div className="stat">
           <span className="stat-label">Spread</span>
-          <span className="stat-value" style={{ color: '#a78bfa', fontSize: 16 }}>
-            {Math.abs(prices.ethereum.WETH - prices.bsc.WBNB).toFixed(2)}
+          <span className="stat-value" style={{ color: spreadBps > 20 ? '#22c55e' : '#a78bfa', fontSize: 16 }}>
+            {spreadBps} bps
+          </span>
+        </div>
+        <div className="stat">
+          <span className="stat-label">Backend</span>
+          <span className="stat-value" style={{ fontSize: 14, color: backendOnline ? '#22c55e' : '#fbbf24' }}>
+            {backendOnline === null ? '⏳' : backendOnline ? '🟢' : '🟡 Sim'}
           </span>
         </div>
         <div className="stat" style={{ justifyContent: 'center' }}>
           <button className="btn btn-secondary" onClick={refreshPrices}
             style={{ fontSize: 11, padding: '6px 12px' }}>
-            🔄 Refresh Prices
+            🔄 Refresh
+          </button>
+          <button className="btn btn-primary" onClick={scanOpportunities}
+            style={{ fontSize: 11, padding: '6px 12px', marginLeft: 4 }}>
+            🔍 Scan
           </button>
         </div>
       </div>
+
+      {/* Opportunities */}
+      {opportunities.length > 0 && (
+        <div className="config-panel" style={{ borderColor: 'rgba(34,197,94,0.2)' }}>
+          <h3>🚀 Cross-Chain Arbitrage Opportunities</h3>
+          {opportunities.map((opp, i) => (
+            <div key={i} style={{ padding: '10px 14px', borderRadius: 8, marginBottom: 8, background: 'rgba(34,197,94,0.06)', border: '1px solid rgba(34,197,94,0.15)', fontSize: 12 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontWeight: 600, color: '#22c55e' }}>{opp.source_chain.toUpperCase()} → {opp.dest_chain.toUpperCase()}</span>
+                <span style={{ color: '#fbbf24', fontWeight: 700 }}>${opp.net_profit_usdt}</span>
+              </div>
+              <div style={{ marginTop: 4, color: '#888', fontSize: 11 }}>
+                Spread: {opp.spread_bps}bps | Amount: ${opp.amount_usdt} | Bridge: {opp.bridge_protocol} | Confidence: {(opp.confidence * 100).toFixed(0)}%
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Bridge Form */}
       <div className="config-panel">

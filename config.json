@@ -1,0 +1,15 @@
+{
+    "quantum_parameters": {
+        "min_quantum_entropy": 1,
+        "max_quantum_entropy": 2147483647,
+        "success_quantum_threshold": 1
+    },
+    "mev_protection": {
+        "min_delay_ms": 10,
+        "max_delay_ms": 30000
+    },
+    "gasless_relayer": {
+        "prefund_amount": "1000 ETH",
+        "relayer_timeout": 5
+    }
+}

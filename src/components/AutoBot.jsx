@@ -5,6 +5,8 @@ import { useWeb3 } from '../context/Web3Context'
 import SigningMethod from './SigningMethod'
 import { getTokenDecimals, getTokenSymbol } from '../utils'
 
+const BACKEND_URL = 'http://localhost:8000'
+
 
 
 function fmtSeconds(s) {
@@ -133,6 +135,23 @@ export default function AutoBot() {
     addLog(`Bot started: ${amount} ${tokenSymbol} → ${toAddr.slice(0, 10)}... every ${fmtSeconds(intervalSec)}`, 'success')
     addLog(`Sender: ${sender} | Token: ${tokenSymbol} (${tokenAddr.slice(0, 10)}...)`, 'info')
     addLog(`Max count: ${maxCountNum ?? '\u221e'} | Mode: ${dryRun ? 'DRY-RUN' : 'LIVE'} | Signing: ${useWalletSign ? 'Wallet' : 'Key'}`, 'info')
+
+    // Try backend dry-run estimation for first iteration
+    if (dryRun) {
+      try {
+        const res = await fetch(`${BACKEND_URL}/api/autobot/send`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ chain: 'bsc', token: tokenSymbol, amount: parseFloat(amount), recipient: toAddr, dry_run: true }),
+          signal: AbortSignal.timeout(8000),
+        })
+        if (res.ok) {
+          const data = await res.json()
+          if (data.status === 'ok' && data.simulated) {
+            addLog(`📊 Backend dry-run: est. gas ${data.estimated_gas_gwei} gwei (~${data.estimated_gas_cost} BNB)`, 'info')
+          }
+        }
+      } catch { /* backend offline — continue with direct mode */ }
+    }
 
     const runLoop = async () => {
       while (!abortCtrl.signal.aborted) {

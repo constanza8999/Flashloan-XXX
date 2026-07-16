@@ -1,5 +1,7 @@
 import React, { useState, useCallback, useEffect } from 'react'
 
+const BACKEND_URL = 'http://localhost:8000'
+
 const ERC20_TOKENS = [
   { symbol: 'USDT', name: 'Tether', address: '0xdAC17F958D2ee523a2206206994597C13D831ec7', decimals: 6 },
   { symbol: 'USDC', name: 'USD Coin', address: '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48', decimals: 6 },
@@ -81,7 +83,21 @@ export default function PricePredictor() {
     setLogs(prev => [{ time: new Date().toLocaleTimeString(), msg, type }, ...prev].slice(0, 100))
   }, [])
 
-  const refreshPrices = useCallback(() => {
+  const refreshPrices = useCallback(async () => {
+    // Try backend for real price data
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/predictor/prices?token=${selectedToken}`, { signal: AbortSignal.timeout(8000) })
+      if (res.ok) {
+        const data = await res.json()
+        if (data.status === 'ok' && data.data?.length > 0) {
+          const lastPrice = data.data[data.data.length - 1].price
+          setTokenPrices(prev => ({ ...prev, [selectedToken]: lastPrice }))
+          addLog(`🔄 Real price fetched: ${selectedToken} = $${lastPrice}`, 'info')
+          return
+        }
+      }
+    } catch { /* fallback to local */ }
+    // Local fallback
     const updates = {}
     Object.entries(tokenPrices).forEach(([symbol, price]) => {
       const volatility = symbol === 'USDT' || symbol === 'USDC' || symbol === 'DAI' ? 0.001 : 0.02
@@ -89,8 +105,8 @@ export default function PricePredictor() {
       updates[symbol] = parseFloat(Math.max(price * 0.8, price + change).toFixed(4))
     })
     setTokenPrices(prev => ({ ...prev, ...updates }))
-    addLog('🔄 Prices refreshed', 'info')
-  }, [tokenPrices, addLog])
+    addLog('🔄 Prices refreshed (local)', 'info')
+  }, [selectedToken, tokenPrices, addLog])
 
   const generateData = useCallback(() => {
     const basePrice = tokenPrices[selectedToken] || 100
@@ -111,31 +127,47 @@ export default function PricePredictor() {
       setPpoStats(prev => ({ ...prev, status: 'training' }))
       addLog('🤖 Training PPO reinforcement learning agent...', 'info')
 
+      // Try backend training
+      try {
+        const res = await fetch(`${BACKEND_URL}/api/predictor/train`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model_arch: 'ppo', token: selectedToken, episodes: 20 }),
+          signal: AbortSignal.timeout(15000),
+        })
+        if (res.ok) {
+          const data = await res.json()
+          if (data.status === 'ok') {
+            setPpoStats(prev => ({
+              totalEpisodes: prev.totalEpisodes + data.episodes,
+              avgReward: data.avg_reward, winRate: data.win_rate,
+              policyLoss: data.policy_loss, valueLoss: data.value_loss,
+              lastTraining: new Date().toLocaleTimeString(), status: 'ready',
+            }))
+            addLog(`✅ PPO agent trained via backend! Episodes: ${data.episodes}, Win rate: ${(data.win_rate * 100).toFixed(0)}%`, 'profit')
+            setPpoTraining(false)
+            return
+          }
+        }
+      } catch { /* fallback below */ }
+
+      // Local fallback
       const episodes = 20
       for (let ep = 0; ep < episodes; ep++) {
         await new Promise(r => setTimeout(r, 300))
         const reward = (Math.random() - 0.3) * 10
-        const policyLoss = Math.max(0.001, 0.1 - ep * 0.004 + Math.random() * 0.01)
-        const valueLoss = Math.max(0.001, 0.08 - ep * 0.003 + Math.random() * 0.008)
         const win = Math.random() > 0.35
-
         setPpoStats(prev => ({
           totalEpisodes: prev.totalEpisodes + 1,
           avgReward: (prev.avgReward * prev.totalEpisodes + reward) / (prev.totalEpisodes + 1),
           winRate: (prev.winRate * prev.totalEpisodes + (win ? 1 : 0)) / (prev.totalEpisodes + 1),
-          policyLoss,
-          valueLoss,
-          lastTraining: new Date().toLocaleTimeString(),
-          status: 'training',
+          policyLoss: Math.max(0.001, 0.1 - ep * 0.004 + Math.random() * 0.01),
+          valueLoss: Math.max(0.001, 0.08 - ep * 0.003 + Math.random() * 0.008),
+          lastTraining: new Date().toLocaleTimeString(), status: 'training',
         }))
-
-        if (ep % 4 === 0) {
-          addLog(`  Episode ${ep + 1}/${episodes} — reward: ${reward.toFixed(2)} ${win ? '✅' : '❌'}`, 'info')
-        }
+        if (ep % 4 === 0) addLog(`  Episode ${ep + 1}/${episodes} — reward: ${reward.toFixed(2)} ${win ? '✅' : '❌'}`, 'info')
       }
-
       setPpoStats(prev => ({ ...prev, status: 'ready' }))
-      addLog(`✅ PPO agent trained! ${episodes} episodes. Avg reward: ${ppoStats.avgReward.toFixed(2)}`, 'profit')
+      addLog(`✅ PPO agent trained (local)! ${episodes} episodes`, 'profit')
       setPpoTraining(false)
       return
     }
@@ -143,29 +175,42 @@ export default function PricePredictor() {
     setTraining(true)
     addLog(`🧠 Training ${modelArch.toUpperCase()} price prediction model...`, 'info')
 
+    // Try backend training
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/predictor/train`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model_arch: modelArch, token: selectedToken, epochs: 8,
+          hidden_units: modelStats.hiddenUnits, learning_rate: modelStats.learningRate, dropout: modelStats.dropout }),
+        signal: AbortSignal.timeout(15000),
+      })
+      if (res.ok) {
+        const data = await res.json()
+        if (data.status === 'ok') {
+          setModelStats(prev => ({
+            ...prev, mse: data.mse, mae: data.mae, accuracy: data.accuracy,
+            epochsTrained: prev.epochsTrained + data.epochs,
+            lastTraining: new Date().toLocaleTimeString(),
+          }))
+          addLog(`✅ ${modelArch.toUpperCase()} model trained via backend! MSE: ${data.mse}, Accuracy: ${data.accuracy}%`, 'profit')
+          setTraining(false)
+          return
+        }
+      }
+    } catch { /* fallback below */ }
+
+    // Local fallback
     const epochs = 8
     for (let epoch = 0; epoch < epochs; epoch++) {
       await new Promise(r => setTimeout(r, 400))
-      const loss = Math.max(0.001, 0.08 - epoch * 0.009 + Math.random() * 0.005)
-      addLog(`  Epoch ${epoch + 1}/${epochs} — loss: ${loss.toFixed(6)}`, 'info')
+      addLog(`  Epoch ${epoch + 1}/${epochs} — loss: ${Math.max(0.001, 0.08 - epoch * 0.009).toFixed(6)}`, 'info')
     }
-
     const mse = parseFloat((Math.random() * 0.002).toFixed(6))
     const mae = parseFloat((Math.random() * 0.03).toFixed(6))
     const accuracy = parseFloat((85 + Math.random() * 12).toFixed(1))
-
-    setModelStats(prev => ({
-      ...prev,
-      mse,
-      mae,
-      accuracy,
-      epochsTrained: prev.epochsTrained + epochs,
-      lastTraining: new Date().toLocaleTimeString(),
-    }))
-
-    addLog(`✅ ${modelArch.toUpperCase()} model trained! MSE: ${mse}, MAE: ${mae}, Accuracy: ${accuracy}%`, 'profit')
+    setModelStats(prev => ({ ...prev, mse, mae, accuracy, epochsTrained: prev.epochsTrained + epochs, lastTraining: new Date().toLocaleTimeString() }))
+    addLog(`✅ ${modelArch.toUpperCase()} model trained (local)! MSE: ${mse}, Accuracy: ${accuracy}%`, 'profit')
     setTraining(false)
-  }, [historicalData, modelArch, addLog])
+  }, [historicalData, modelArch, selectedToken, modelStats, addLog])
 
   const predict = useCallback(async () => {
     if (historicalData.length < 10) {
@@ -175,31 +220,41 @@ export default function PricePredictor() {
 
     setLoading(true)
     addLog('🔮 Generating price predictions...', 'info')
-
-    await new Promise(r => setTimeout(r, 1000))
-
     const lastPrice = historicalData[historicalData.length - 1].price
-    const predictions = []
-    let price = lastPrice
 
+    // Try backend prediction
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/predictor/predict`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: selectedToken, interval, steps: 12, last_price: lastPrice }),
+        signal: AbortSignal.timeout(10000),
+      })
+      if (res.ok) {
+        const data = await res.json()
+        if (data.status === 'ok' && data.predictions?.length > 0) {
+          setPredictions(data.predictions)
+          const dir = data.direction === 'up' ? '📈' : '📉'
+          addLog(`🔮 ${dir} Backend predictions: ${lastPrice.toFixed(4)} → ${data.predictions[data.predictions.length - 1].price.toFixed(4)} (conf: ${(data.avg_confidence * 100).toFixed(0)}%)`, 'profit')
+          setLoading(false)
+          return
+        }
+      }
+    } catch { /* fallback below */ }
+
+    // Local fallback
+    await new Promise(r => setTimeout(r, 1000))
+    const preds = []
+    let price = lastPrice
     for (let i = 1; i <= 12; i++) {
       const change = (Math.random() - 0.48) * 0.02 * price
       price = Math.max(price * 0.9, price + change)
-      predictions.push({
-        step: i,
-        price: parseFloat(price.toFixed(4)),
-        confidence: parseFloat(Math.max(0.3, Math.min(0.98, 0.95 - i * 0.05)).toFixed(2)),
-        timestamp: Date.now() + (i * interval * 1000),
-      })
+      preds.push({ step: i, price: parseFloat(price.toFixed(4)), confidence: parseFloat(Math.max(0.3, Math.min(0.98, 0.95 - i * 0.05)).toFixed(2)), timestamp: Date.now() + (i * interval * 1000) })
     }
-
-    setPredictions(predictions)
-
-    const avgConfidence = predictions.reduce((s, p) => s + p.confidence, 0) / predictions.length
-    const direction = predictions[predictions.length - 1].price > lastPrice ? '📈' : '📉'
-    addLog(`🔮 ${direction} Predictions generated: ${lastPrice.toFixed(4)} → ${predictions[predictions.length - 1].price.toFixed(4)} (avg conf: ${(avgConfidence * 100).toFixed(0)}%)`, 'profit')
+    setPredictions(preds)
+    const dir = preds[preds.length - 1].price > lastPrice ? '📈' : '📉'
+    addLog(`🔮 ${dir} Local predictions: ${lastPrice.toFixed(4)} → ${preds[preds.length - 1].price.toFixed(4)}`, 'profit')
     setLoading(false)
-  }, [historicalData, interval, addLog])
+  }, [historicalData, interval, selectedToken, addLog])
 
   useEffect(() => {
     generateData()

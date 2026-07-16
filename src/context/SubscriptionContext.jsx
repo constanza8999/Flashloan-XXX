@@ -98,6 +98,8 @@ export const FEATURE_TIERS = {
   telegram: 'pro',
   'flash-send': 'pro',
   'gasless-relay': 'pro',
+  'quantum-engine': 'pro',
+  'universal-send': 'pro',
   propagation: 'enterprise',
   'cross-chain': 'enterprise',
   'p2p-network': 'enterprise',

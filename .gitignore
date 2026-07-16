@@ -36,6 +36,16 @@ yarn-error.log*
 # Coverage
 coverage/
 
+# Binary & compiled files
+*.exe
+*.dll
+*.so
+*.dylib
+
+# C++ source (built from source)
+*.cpp
+*.h
+
 # Misc
 *.pyc
 __pycache__/

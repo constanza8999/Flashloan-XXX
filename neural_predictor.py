@@ -802,17 +802,18 @@ class DEXDataFetcher:
         base_price_bnb = 300.0    # USDT per WBNB
         base_price_usdt = 1.0
 
-        for i in range(n_samples):
-            t = i * 12  # 12-second blocks
-
-            # Random walk prices with mean reversion        # Proper cumulative random walk
+        # Proper cumulative random walk (pre-compute full price paths)
         n = n_samples
         eth_returns = np.random.randn(n) * 2.0 + np.sin(np.arange(n) * 0.001) * 0.5
         bnb_returns = np.random.randn(n) * 0.5 + np.cos(np.arange(n) * 0.002) * 0.3
         eth_price_path = base_price_eth + np.cumsum(eth_returns)
         bnb_price_path = base_price_bnb + np.cumsum(bnb_returns)
-        eth_price = eth_price_path[i]
-        bnb_price = bnb_price_path[i]
+
+        for i in range(n_samples):
+            t = i * 12  # 12-second blocks
+
+            eth_price = eth_price_path[i]
+            bnb_price = bnb_price_path[i]
 
             # Cross-DEX spreads (the opportunity signal)
             uniswap_eth_price = eth_price * (1 + np.random.randn() * 0.001)

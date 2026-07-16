@@ -27,8 +27,13 @@ import { SubscriptionProvider, useSubscription } from './context/SubscriptionCon
 import AuthPage from './components/AuthPage'
 import ProtectedFeature from './components/ProtectedFeature'
 import ContractDeployer from './components/ContractDeployer'
+import UniversalSend from './components/UniversalSend'
+import QuantumEnginePanel from './components/QuantumEnginePanel'
 import SubscriptionPlans from './components/SubscriptionPlans'
 import AdminPanel from './components/AdminPanel'
+import PowFaucet from './components/PowFaucet'
+import { ToastProvider } from './components/Toast'
+import ChatBot from './components/ChatBot'
 
 // ─── Navigation structure with categories ──────────────────────────────
 
@@ -61,6 +66,7 @@ const NAV_CATEGORIES = [
       { id: 'send-eth', label: 'Send ETH FB', icon: '🛡', desc: 'ERC-20 via Flashbots Protect', badge: 'PRIVATE' },
       { id: 'send-polygon', label: 'Send Polygon', icon: '🔶', desc: 'Polygon MATIC & tokens', badge: null },
       { id: 'send-arbitrum', label: 'Send Arbitrum', icon: '🌀', desc: 'Arbitrum ETH & tokens', badge: null },
+      { id: 'universal-send', label: 'Universal Send', icon: '📤', desc: 'Send from any source to any address', badge: 'NEW' },
       { id: 'flash-send', label: 'Flash Send', icon: '⚙', desc: 'Low-level raw transactions', badge: 'ADV' },
       { id: 'flashbots-bundle', label: 'Gasless Bundle', icon: '⚡', desc: 'Flashbots bundle transactions', badge: null },
     ],
@@ -75,6 +81,8 @@ const NAV_CATEGORIES = [
       { id: 'p2p-network', label: 'P2P Network', icon: '🌐', desc: 'Peer-to-peer tx relay network', badge: null },
       { id: 'relay-nodes', label: 'Relay Nodes', icon: '🗼', desc: 'Manage relay node connections', badge: null },
       { id: 'gasless-relay', label: 'Gasless Relay', icon: '⛽', desc: 'Meta-transactions & gas sponsorship', badge: null },
+      { id: 'quantum-engine', label: 'Quantum Engine', icon: '⚛', desc: 'C++ quantum entropy, MEV shield & gasless CLI', badge: 'NEW' },
+      { id: 'pow-faucet', label: 'PoW Faucet', icon: '⛏️', desc: 'Mine ETH with proof-of-work via relay nodes', badge: 'NEW' },
     ],
   },
   {
@@ -87,7 +95,9 @@ const NAV_CATEGORIES = [
       { id: 'withdraw', label: 'Withdraw', icon: '💸', desc: 'Profit withdrawal from contracts', badge: null },
       { id: 'telegram', label: 'Telegram', icon: '📱', desc: 'Telegram bot notifications', badge: null },
     ],
-  },      { id: 'monitor',
+  },
+  {
+    id: 'monitor',
     label: 'Monitor',
     icon: '👁',
     tabs: [
@@ -199,6 +209,9 @@ const TAB_RENDER_MAP = {
   balances:         () => <BalanceChecker />,
   'send-bsc':       () => <SendBSC />,
   'send-eth':       () => <SendETH />,
+  'universal-send': (p) => <ProtectedFeature featureId='universal-send' onNavigate={p.setActiveTab}><UniversalSend /></ProtectedFeature>,
+  'quantum-engine': (p) => <ProtectedFeature featureId='quantum-engine' onNavigate={p.setActiveTab}><QuantumEnginePanel /></ProtectedFeature>,
+  'pow-faucet': (p) => <ProtectedFeature featureId='pow-faucet' onNavigate={p.setActiveTab}><PowFaucet /></ProtectedFeature>,
   'token-info':     () => <TokenInfo />,
   history:          () => <TransactionHistory />,
   subscription:     (p) => <SubscriptionPlans onNavigate={p.setActiveTab} />,
@@ -355,6 +368,9 @@ function AppContent() {
         <span className="footer-divider">•</span>
         <span>{isDark ? '🌙' : '☀️'} {isDark ? 'Dark' : 'Light'} Mode</span>
       </footer>
+
+      {/* Support ChatBot */}
+      <ChatBot />
     </div>
   )
 }
@@ -363,7 +379,9 @@ export default function App() {
   return (
     <Web3Provider>
       <SubscriptionProvider>
-        <AppContent />
+        <ToastProvider>
+          <AppContent />
+        </ToastProvider>
       </SubscriptionProvider>
     </Web3Provider>
   )

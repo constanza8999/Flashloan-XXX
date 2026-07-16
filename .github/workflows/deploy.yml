@@ -4,10 +4,12 @@ on:
   push:
     branches: [main]
 
+# Grant GITHUB_TOKEN the permissions required for Pages deployment
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: read      # to checkout the repo
+  pages: write        # to deploy to Pages
+  id-token: write     # to verify the deployment via OIDC
+  actions: read       # required by deploy-pages v4+
 
 concurrency:
   group: pages
@@ -22,10 +24,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
@@ -37,15 +39,15 @@ jobs:
         run: npm run build
 
       - name: Setup Pages
-        uses: actions/configure-pages@v4
+        uses: actions/configure-pages@v6
         with:
           enablement: true
 
       - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v5
         with:
           path: dist
 
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5

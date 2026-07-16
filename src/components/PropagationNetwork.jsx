@@ -13,6 +13,8 @@ import PrivateKeyInput from './shared/PrivateKeyInput'
 import LoadingButton from './shared/LoadingButton'
 import ErrorBox from './shared/ErrorBox'
 
+const BACKEND_URL = 'http://localhost:8000'
+
 const DEFAULT_ENDPOINTS = [
   { name: 'Flashbots Protect', url: ETH_PROTECT_RPC, priority: 10, active: true },
   { name: 'Flashbots Relay', url: 'https://relay.flashbots.net', priority: 9, active: true },
@@ -117,6 +119,16 @@ export default function PropagationNetwork() {
 
   const testAllEndpoints = useCallback(async () => {
     addLog('🔍 Testing all endpoint connections...', 'info')
+    // Try backend propagation stats first
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/propagation/stats`, { signal: AbortSignal.timeout(5000) })
+      if (res.ok) {
+        const data = await res.json()
+        if (data.status === 'ok') {
+          addLog(`📊 Backend propagation stats loaded — ${data.endpoints ? Object.keys(data.endpoints).length : 0} endpoints tracked`, 'info')
+        }
+      }
+    } catch { /* offline — continue with direct testing */ }
     let online = 0
     for (const ep of endpoints) {
       if (!ep.active || !ep.url) continue
@@ -125,6 +137,18 @@ export default function PropagationNetwork() {
     }
     addLog(`📊 ${online}/${endpoints.filter(e => e.active && e.url).length} endpoints online`, online > 0 ? 'success' : 'info')
   }, [endpoints, testEndpoint, addLog])
+
+  // Fetch backend propagation endpoints on mount
+  useEffect(() => {
+    fetch(`${BACKEND_URL}/api/propagation/endpoints`, { signal: AbortSignal.timeout(5000) })
+      .then(res => res.json())
+      .then(data => {
+        if (data.status === 'ok' && data.endpoints) {
+          addLog(`📊 Backend reports ${data.total} propagation endpoints`, 'info')
+        }
+      })
+      .catch(() => {})
+  }, [addLog])
 
   const buildTransaction = useCallback(async () => {
     if (!w3) { addLog('❌ No RPC connection for selected chain', 'error'); return null }
